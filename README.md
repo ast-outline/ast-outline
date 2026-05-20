@@ -117,6 +117,9 @@ ast-outline show Player.cs TakeDamage Heal Die
 # Find every place a symbol appears, with scope + kind
 ast-outline grep User.save src/
 
+# Machine-readable JSON for tooling / CI (works on outline, digest, grep, show)
+ast-outline digest src/Services --json
+
 # Built-in guide
 ast-outline help
 ```
@@ -228,6 +231,17 @@ fine). All flags and the full output format reference live in
   so each change is reviewable.
 
 - **`help [topic]`** — built-in usage guide.
+
+**Machine-readable output (`--json`).** Every structural command — `outline`,
+`digest`, `grep`, `show` — accepts `--json`, swapping the text format for a
+single JSON document with a fixed envelope (`tool` / `schema_version` /
+`command`). It's for **programmatic** consumers — editor plugins, CI gates,
+scripts — that want a stable, parseable contract instead of the token-dense
+text format (which stays the default for humans and agents). JSON mode is
+**lossless** — content-filtering flags are ignored, the complete IR is always
+emitted — and failures are emitted as a JSON `error` object too, so stdout is
+*always* valid JSON. Full per-field schema:
+[output format → JSON](https://ast-outline.github.io/output-format/#json-output).
 
 > **CLI exit-code contract.** User-facing failures (file not found, no match,
 > bad arg) print a `# note: …` line to **stdout** and exit `0`. This is

@@ -116,6 +116,9 @@ ast-outline show Player.cs TakeDamage Heal Die
 # 找到符号的所有出现位置，附带 scope + kind
 ast-outline grep User.save src/
 
+# 面向工具链 / CI 的机器可读 JSON（outline、digest、grep、show 都支持）
+ast-outline digest src/Services --json
+
 # 内置帮助
 ast-outline help
 ```
@@ -222,6 +225,15 @@ flag 列表与输出格式参考见
   自己的工具完成的，每一步都可审查。
 
 - **`help [topic]`** —— 内置使用指南。
+
+**机器可读输出（`--json`）。** 每个结构化命令 —— `outline`、`digest`、`grep`、
+`show` —— 都接受 `--json`：用单个 JSON 文档替代文本输出，带固定的 envelope
+（`tool` / `schema_version` / `command`）。它面向**程序化**消费方 —— 编辑器
+插件、CI 闸门、脚本 —— 这些场景需要稳定、可解析的契约，而不是 token 密集的
+文本格式（文本格式仍是人类与代理的默认输出）。JSON 模式是**无损的** —— 内容
+过滤类 flag 会被忽略，始终输出完整 IR —— 错误也以 JSON `error` 对象输出，
+因此 stdout *始终*是合法 JSON。完整的逐字段 schema 见
+[输出格式 → JSON](https://ast-outline.github.io/output-format/#json-output)。
 
 > **CLI 退出码约定。** 面向用户的错误（文件不存在、无匹配、参数错误）会
 > 在 **stdout** 打印一行 `# note: …` 并返回 `0`。这是有意为之 ——

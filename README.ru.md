@@ -120,6 +120,9 @@ ast-outline show Player.cs TakeDamage Heal Die
 # Найти все вхождения символа со scope и kind
 ast-outline grep User.save src/
 
+# Машиночитаемый JSON для тулинга / CI (работает с outline, digest, grep, show)
+ast-outline digest src/Services --json
+
 # Встроенный help
 ast-outline help
 ```
@@ -234,6 +237,17 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
   инструментами, каждое изменение можно отревьюить.
 
 - **`help [topic]`** — встроенный справочник.
+
+**Машиночитаемый вывод (`--json`).** Каждая структурная команда — `outline`,
+`digest`, `grep`, `show` — принимает `--json`: вместо текста печатается один
+JSON-документ с фиксированным envelope (`tool` / `schema_version` /
+`command`). Это для **программных** потребителей — editor-плагинов, CI-гейтов,
+скриптов — которым нужен стабильный парсимый контракт, а не токен-плотный
+текстовый формат (он остаётся дефолтом для людей и агентов). JSON-режим
+**lossless** — content-фильтрующие флаги игнорируются, всегда отдаётся полный
+IR — а ошибки тоже печатаются JSON-объектом `error`, так что stdout *всегда*
+валидный JSON. Полная схема по полям:
+[формат вывода → JSON](https://ast-outline.github.io/output-format/#json-output).
 
 > **CLI-контракт по exit-кодам.** User-facing ошибки (файл не найден, нет
 > совпадений, кривой аргумент) печатают строку `# note: …` в **stdout** и
