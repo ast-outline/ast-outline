@@ -7,7 +7,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
-## [Unreleased]
+## [0.9.4] — 2026-05-20
+
+Adds a Swift language adapter backed by `tree-sitter-swift`.
 
 ### Added
 
@@ -20,6 +22,9 @@ For the complete history before v0.6.0, see `git log` and the
   hierarchy, properties, generics, nested types, protocol members,
   visibility defaults, compact Swift compiler-suite-style examples,
   CLI discovery and clean fixture parse counts.
+- **Swift `grep` classification.** Structural `grep` now treats
+  Swift `//` / `///` comment lines as noise and tags `import` lines
+  as `[import]`, consistent with the other `//`-comment languages.
 
 ## [0.9.3] — 2026-05-20
 
