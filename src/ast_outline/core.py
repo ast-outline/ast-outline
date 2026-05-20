@@ -32,6 +32,19 @@ KIND_EVENT = "event"
 KIND_DELEGATE = "delegate"
 KIND_OPERATOR = "operator"
 
+# A named structural block that is neither a type nor a callable: it
+# groups child declarations the source nests inside a *callback
+# argument* rather than a language-level body. Used by the TypeScript
+# adapter for callback-DSL containers — test suites (`describe(...)`,
+# `it(...)`), setup-stores (`defineStore('id', () => {...})`) and the
+# like. In `outline` it renders its signature followed by indented
+# children (same shape as a class); in `digest` it surfaces as a single
+# `name [block]` token. It is deliberately NOT counted in the header
+# `types` / `methods` / `fields` counters (`_collect_counts` skips it,
+# like `KIND_NAMESPACE`) — it is structural grouping, not a code
+# declaration the agent would `show`.
+KIND_BLOCK = "block"
+
 # Non-code (narrative) document kinds — currently used by the markdown adapter
 KIND_HEADING = "heading"
 KIND_CODE_BLOCK = "code_block"
@@ -1143,8 +1156,16 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
         types = _flatten_types(result.declarations)
         if not opts.include_private:
             types = [t for t in types if t.visibility != "private"]
+        blocks = _flatten_top_blocks(result.declarations)
         free_functions = _flatten_free_functions(result.declarations, opts)
-        headlines = [t.name for t in types] + [f.name for f in free_functions]
+        headlines = (
+            [t.name for t in types]
+            # Block labels are quoted — they are free-text and may carry
+            # commas, which would otherwise collide with the `, ` that
+            # joins the headline list.
+            + [f"'{b.name}'" for b in blocks]
+            + [f.name for f in free_functions]
+        )
 
     if not headlines:
         return []
@@ -1253,9 +1274,10 @@ def _digest_one(
         return lines
 
     types = _flatten_types(result.declarations)
+    blocks = _flatten_top_blocks(result.declarations)
     free_functions = _flatten_free_functions(result.declarations, opts)
 
-    if not types and not free_functions:
+    if not types and not blocks and not free_functions:
         # `compact` hides declaration-less files entirely (the empty
         # marker is noise when scanning a map); other formats keep the
         # header with an explicit `# no declarations` annotation.
@@ -1332,6 +1354,30 @@ def _digest_one(
                 lines.append(f"      ... ({len(collapsed) - len(shown)} more)")
             # `compact` skips the inter-type paragraph break — types
             # stack tightly to maximise information density per line.
+            if not is_compact:
+                lines.append("")
+
+    # Callback-DSL blocks (test suites, setup-stores). Rendered like a
+    # type: a `block <label>` header followed by member tokens for the
+    # cases / nested blocks / functions declared inside. This keeps the
+    # digest body consistent with the header counters (which already
+    # recurse into a block's children) and mirrors how a class renders.
+    for b in blocks:
+        if is_compact:
+            suffix = ""
+        else:
+            suffix = b.lines_suffix()
+            if suffix and flags is not None:
+                flags.line_range = True
+        lines.append("    block " + b.name + suffix)
+        members = _digest_members(b, opts)
+        if members:
+            collapsed = _collapse_overloads(members)
+            shown = collapsed[: opts.max_members_per_type]
+            tokens = [_member_token(m, c, parent=b, flags=flags) for m, c in shown]
+            lines.extend(_wrap_tokens(tokens, width=100, indent="      "))
+            if len(collapsed) > len(shown):
+                lines.append(f"      ... ({len(collapsed) - len(shown)} more)")
             if not is_compact:
                 lines.append("")
 
@@ -1424,7 +1470,13 @@ def _member_token(
             if count > 1:
                 flags.overloads = True
     else:
-        base = f"{d.name} [{d.kind}]"
+        # A block's name is a free-text label (a test description) that
+        # can contain commas — and `_wrap_tokens` joins member tokens
+        # with `", "`. Quote the label so an internal comma stays inside
+        # the token instead of reading as a token separator. Quotes also
+        # mark it as a string label, matching the `it('...')` signature.
+        label = f"'{d.name}'" if d.kind == KIND_BLOCK else d.name
+        base = f"{label} [{d.kind}]"
         if flags is not None:
             flags.kind = True
     if _is_deprecated(d):
@@ -1570,11 +1622,36 @@ def _flatten_free_functions(decls: list[Declaration], opts: DigestOptions) -> li
             out.extend(_flatten_free_functions(d.children, opts))
         elif d.kind in _DIGEST_TYPE_KINDS:
             continue
+        elif d.kind == KIND_BLOCK:
+            # Callback-DSL blocks are rendered by their own digest pass
+            # (`_flatten_top_blocks` + the blocks loop). Skip without
+            # recursing — a function declared inside a block belongs to
+            # that block as a member, not to the module's free-function
+            # list.
+            continue
         else:
             if d.kind == KIND_FIELD and not opts.include_fields:
                 continue
             if d.visibility == "private" and not opts.include_private:
                 continue
+            out.append(d)
+    return out
+
+
+def _flatten_top_blocks(decls: list[Declaration]) -> list[Declaration]:
+    """Top-level ``KIND_BLOCK`` containers (test suites, setup-stores).
+
+    Dives through namespaces, but does NOT recurse into a block's own
+    children — a nested block (`it` inside `describe`) stays a member of
+    its parent and is rendered as a member token, not hoisted to its own
+    digest header. Mirrors how `_flatten_types` treats nested types as
+    rows but `_digest_members` handles the one-level member expansion.
+    """
+    out: list[Declaration] = []
+    for d in decls:
+        if d.kind == KIND_NAMESPACE:
+            out.extend(_flatten_top_blocks(d.children))
+        elif d.kind == KIND_BLOCK:
             out.append(d)
     return out
 
@@ -1673,6 +1750,12 @@ def find_symbols(result: ParseResult, symbol: str) -> list[SymbolMatch]:
     Matching is suffix-based — `TakeDamage` matches `Foo.Bar.TakeDamage`
     and `PlayerController.TakeDamage` also matches.
 
+    A dot is a hierarchy separator, so a declaration whose own name
+    contains a literal dot (a callback-DSL block named after a free-text
+    label — e.g. a test `it('parses 3.14 correctly')`) would be missed
+    by the dotted walk. As a fallback, when a multi-part query finds
+    nothing the whole string is retried as a single name.
+
     Markdown headings get a relaxed contract: case-insensitive **substring**
     containment per dotted part, with inline-markdown punctuation (backticks,
     asterisks, underscores, tildes) stripped from BOTH the heading title and
@@ -1687,6 +1770,19 @@ def find_symbols(result: ParseResult, symbol: str) -> list[SymbolMatch]:
     parts = _split_query(symbol)
     matches: list[SymbolMatch] = []
     _search_walk(result.declarations, result.source, [], [], parts, matches)
+    # Fallback for free-text declaration names that contain a literal
+    # dot. `_split_query` reads every `.` as a hierarchy separator, which
+    # is right for code symbols (`Class.method`) but wrong for a
+    # callback-DSL block named after a free-text label — a test
+    # `it('parses 3.14 correctly')` becomes a block named `parses 3.14
+    # correctly`. The dotted-trail walk above then hunts for a nesting
+    # that doesn't exist and finds nothing. When a multi-part query
+    # yields zero hits, retry once treating the whole string as a single
+    # name. Gated on `not matches` so a successful dotted lookup never
+    # pays for the second walk; gated on `len(parts) > 1` so a query
+    # with no separator (already a single token) isn't walked twice.
+    if not matches and len(parts) > 1:
+        _search_walk(result.declarations, result.source, [], [], [symbol], matches)
     return matches
 
 

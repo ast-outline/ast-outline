@@ -179,6 +179,39 @@ def test_grep_top_level_match_has_empty_scope(tmp_path: Path) -> None:
     assert scopes == [[]]
 
 
+def test_grep_callback_block_in_scope_chain(tmp_path: Path) -> None:
+    """A match inside a `describe`/`it` callback reports the block labels
+    as its enclosing scope — not the `describe`/`it` keyword. Callback-DSL
+    blocks (issue #3) flow into grep's scope walk like any declaration."""
+    src = tmp_path / "x.spec.ts"
+    src.write_text(
+        "describe('outer suite', () => {\n"
+        "  it('does the thing', () => {\n"
+        "    doSomething()\n"
+        "  })\n"
+        "})\n"
+    )
+    results, _, _ = grep("doSomething", [src])
+    scopes = _scopes(results)
+    assert scopes == [["outer suite", "does the thing"]]
+
+
+def test_grep_block_label_is_a_definition(tmp_path: Path) -> None:
+    """Grepping a test description matches the block's name token, so it
+    classifies as [def]. Before callback blocks existed the same text was
+    string-literal noise, hidden by default."""
+    src = tmp_path / "x.spec.ts"
+    src.write_text(
+        "describe('user login flow', () => {\n"
+        "  it('rejects bad password', () => {\n"
+        "    check()\n"
+        "  })\n"
+        "})\n"
+    )
+    results, _, _ = grep("login flow", [src])
+    assert _kinds(results) == [KIND_DEF]
+
+
 # --- def-detection precision ----------------------------------------------
 
 

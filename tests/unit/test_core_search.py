@@ -54,6 +54,44 @@ def test_find_symbols_no_match_returns_empty(csharp_dir):
     assert find_symbols(r, "DoesNotExist") == []
 
 
+def test_find_symbols_matches_callback_block_by_label(fixtures_dir):
+    """A callback-DSL block (issue #3) is found by its string label —
+    the `show` lookup path — including labels that contain spaces. The
+    block is named after the label, not the `describe`/`it` keyword."""
+    r = TypeScriptAdapter().parse(fixtures_dir / "typescript" / "callbacks.ts")
+    suite = find_symbols(r, "outer suite")
+    assert len(suite) == 1
+    assert suite[0].kind == "block"
+    assert "describe('outer suite', () => {" in suite[0].source
+    # A nested case is reachable by its own label, qualified under the
+    # suite chain.
+    nested = find_symbols(r, "case with locals")
+    assert len(nested) == 1
+    assert nested[0].qualified_name.endswith("case with locals")
+
+
+def test_find_symbols_label_with_literal_dot(tmp_path):
+    """A block label containing a literal dot — `it('parses 3.14
+    correctly')` — is still found. `_split_query` reads the dot as a
+    path separator; when that dotted walk finds nothing, find_symbols
+    retries with the whole string as one name."""
+    p = tmp_path / "x.spec.ts"
+    p.write_text(
+        "describe('math', () => {\n"
+        "  it('parses 3.14 correctly', () => {\n"
+        "    expect(parse('3.14')).toBe(3.14)\n"
+        "  })\n"
+        "})\n"
+    )
+    r = TypeScriptAdapter().parse(p)
+    matches = find_symbols(r, "parses 3.14 correctly")
+    assert len(matches) == 1
+    assert matches[0].kind == "block"
+    # The fallback must not fabricate matches — a genuinely absent
+    # dotted query still returns nothing.
+    assert find_symbols(r, "math.nonexistent") == []
+
+
 def test_find_symbols_source_includes_leading_doc(csharp_dir):
     r = CSharpAdapter().parse(csharp_dir / "unity_behaviour.cs")
     [match] = find_symbols(r, "HeroController.TakeDamage")

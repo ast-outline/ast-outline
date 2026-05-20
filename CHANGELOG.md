@@ -7,6 +7,68 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [0.9.1] — 2026-05-20
+
+Patch release closing [issue #3](https://github.com/ast-outline/ast-outline/issues/3)
+— the TypeScript/JavaScript adapter's blind spot for structure
+expressed through **callback arguments**. Test files (`describe(...)` /
+`it(...)`) outlined as empty; Pinia setup-stores
+(`defineStore('id', () => {...})`) dumped the entire callback body into
+one signature line. Both are now recognised as `block` declarations
+and descended into. The recognition rule is structural — no hard-coded
+list of framework names — so it covers vitest / jest / mocha / jasmine
+/ ava / tape / node:test, Pinia `defineStore`, and any in-house DSL of
+the same `name('label', callback)` shape, and survives new frameworks
+without a code change.
+
+### Added
+
+- **`KIND_BLOCK` — a structural container kind** (`src/ast_outline/core.py`).
+  Groups child declarations the source nests inside a *callback
+  argument* rather than a language-level body. Neither a type nor a
+  callable: in `outline` it renders its signature with indented
+  children (class-like); in `digest` it renders as a `block <label>`
+  header with member tokens; it is not counted in the
+  `types` / `methods` / `fields` header counters.
+- **Callback-DSL block recognition (TypeScript adapter).** A
+  `call_expression` becomes a block when (1) its callee is a plain
+  identifier, (2) its last argument is a function literal, and (3) its
+  first argument is a string-literal label. Clause 3 separates a named
+  container (`describe('suite', fn)`, `defineStore('id', fn)`) from a
+  bare function wrapper (`action(fn)`) or a property-definition wrapper
+  (`defineGetter(obj, 'name', fn)`). Bare statements
+  (`describe('...', () => {...})`) and assignments
+  (`const useStore = defineStore('...', () => {...})`) are both
+  handled; blocks nest (`describe` → `it` → inner declarations).
+- All four commands understand blocks: `outline` (indented tree),
+  `digest` (`block <label>` header + member tokens), `show` (extract
+  by label, including labels with spaces / colons / dots), `grep`
+  (blocks join the scope chain; a test description matches as `[def]`).
+
+### Fixed
+
+- **Empty outline for callback-only files** (issue #3, example 2).
+  A file whose entire structure lives inside `describe`/`it` callbacks
+  now produces a full declaration tree instead of nothing.
+- **Callback body dumped into a signature** (issue #3, example 1).
+  A `defineStore('id', () => {...})` setup-store no longer collapses
+  its whole implementation onto the signature line.
+- **Function bodies no longer leak into field signatures.** A field
+  whose value embeds a function/method body
+  (`const inc = action((d) => { ...stmts... })`) renders with the body
+  elided to `{...}` — an outline shows structure, never implementation
+  code.
+- **Commented-out code no longer renders as documentation.** A leading
+  run of `//` comments that is disabled code (braces, arrow bodies,
+  declaration keywords — by majority vote) is dropped instead of being
+  shown as doc lines on the following declaration. Genuine prose, and
+  any `/** ... */` JSDoc block, are kept.
+- **`show` finds declarations whose name contains a literal dot.**
+  `find_symbols` reads a dot as a hierarchy separator (`Class.method`);
+  a callback-DSL block named after a free-text label
+  (`it('parses 3.14 correctly')`) would be missed. When a multi-part
+  query finds nothing, the whole string is retried as a single name.
+
 ## [0.9.0] — 2026-05-17
 
 Minor release — first new language adapter since the Ruby drop:
