@@ -7,6 +7,24 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [0.9.5] — 2026-05-20
+
+Patch release: the v0.9.4 Swift adapter shipped without `.swift` in
+the LLM-agent prompt, so an agent running `ast-outline prompt` on a
+Swift project never learned the tool applies.
+
+### Fixed
+
+- **`.swift` added to the agent prompt.** The `AGENT_PROMPT` snippet
+  (`ast-outline prompt`) now lists `.swift` alongside the other
+  supported extensions. v0.9.4 added the adapter and the CLI help but
+  missed this one snippet.
+- **Prompt/adapter sync is now enforced by a test.** The regression
+  test that was meant to catch exactly this checked a hardcoded
+  extension list instead of the registered adapters, so it passed
+  while `.swift` was missing. It now derives from `ADAPTERS` — a new
+  adapter with no extension named in the prompt fails the suite.
+
 ## [0.9.4] — 2026-05-20
 
 Adds a Swift language adapter backed by `tree-sitter-swift`.

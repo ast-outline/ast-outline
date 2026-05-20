@@ -86,17 +86,22 @@ def test_snippet_starts_with_markdown_h2():
 
 
 def test_snippet_mentions_every_supported_file_extension():
-    """If someone adds a new adapter but forgets to update the snippet,
-    the list becomes stale. This test forces a reminder — it fails loudly
-    when extensions diverge from the constant."""
-    # The prompt-tuner review kept the full extension list deliberately
-    # (Haiku concreteness). Assert each supported ext appears at least once.
-    for ext in [
-        ".cs", ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx",
-        ".java", ".kt", ".kts", ".scala", ".sc", ".go", ".css",
-        ".scss", ".md", ".yaml", ".yml",
-    ]:
-        assert f"`{ext}`" in AGENT_PROMPT, f"snippet missing extension {ext!r}"
+    """Every registered adapter must have at least one of its file
+    extensions named in the snippet — otherwise an LLM agent reading
+    `ast-outline prompt` on that language never learns the tool applies.
+
+    Derived from ``ADAPTERS``, not a hardcoded list: the previous
+    hardcoded-list version of this test silently missed the Swift
+    adapter (`.swift` shipped in v0.9.4 with no prompt entry). Adding a
+    new adapter without naming an extension in the snippet now fails
+    here loudly."""
+    from ast_outline.adapters import ADAPTERS
+
+    for adapter in ADAPTERS:
+        assert any(f"`{ext}`" in AGENT_PROMPT for ext in adapter.extensions), (
+            f"{type(adapter).__name__}: snippet names none of "
+            f"{sorted(adapter.extensions)}"
+        )
 
 
 def test_snippet_covers_all_subcommands():
