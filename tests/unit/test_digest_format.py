@@ -15,6 +15,7 @@ from ast_outline.adapters.markdown import MarkdownAdapter
 from ast_outline.adapters.python import PythonAdapter
 from ast_outline.adapters.rust import RustAdapter
 from ast_outline.adapters.scala import ScalaAdapter
+from ast_outline.adapters.swift import SwiftAdapter
 from ast_outline.adapters.typescript import TypeScriptAdapter
 from ast_outline.adapters.yaml import YamlAdapter
 from ast_outline.core import (
@@ -1530,6 +1531,12 @@ def test_legend_present_for_rust_fixtures(rust_dir):
 
 def test_legend_present_for_typescript_fixtures(fixtures_dir):
     r = TypeScriptAdapter().parse(fixtures_dir / "typescript" / "hierarchy.ts")
+    legend = _legend_line(render_digest([r], DigestOptions()))
+    assert legend is not None
+
+
+def test_legend_present_for_swift_fixtures(swift_dir):
+    r = SwiftAdapter().parse(swift_dir / "user_service.swift")
     legend = _legend_line(render_digest([r], DigestOptions()))
     assert legend is not None
 

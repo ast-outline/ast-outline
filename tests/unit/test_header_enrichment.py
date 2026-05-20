@@ -21,6 +21,7 @@ from ast_outline.adapters.kotlin import KotlinAdapter
 from ast_outline.adapters.markdown import MarkdownAdapter
 from ast_outline.adapters.python import PythonAdapter
 from ast_outline.adapters.scala import ScalaAdapter
+from ast_outline.adapters.swift import SwiftAdapter
 from ast_outline.adapters.typescript import TypeScriptAdapter
 from ast_outline.core import (
     DigestOptions,
@@ -539,7 +540,14 @@ def test_outline_header_includes_approx_token_count(java_dir):
 
 
 def test_outline_token_count_is_present_for_every_language(
-    csharp_dir, python_dir, java_dir, kotlin_dir, scala_dir, go_dir, fixtures_dir
+    csharp_dir,
+    python_dir,
+    java_dir,
+    kotlin_dir,
+    scala_dir,
+    go_dir,
+    swift_dir,
+    fixtures_dir,
 ):
     """Token count is computed inline from source bytes — must work
     universally, no per-adapter changes required."""
@@ -552,6 +560,7 @@ def test_outline_token_count_is_present_for_every_language(
         KotlinAdapter().parse(kotlin_dir / "user_service.kt"),
         ScalaAdapter().parse(scala_dir / "user_service.scala"),
         GoAdapter().parse(go_dir / "user_service.go"),
+        SwiftAdapter().parse(swift_dir / "user_service.swift"),
         TypeScriptAdapter().parse(fixtures_dir / "typescript" / "storage_service.ts"),
         MarkdownAdapter().parse(fixtures_dir / "markdown" / "readme_style.md"),
     ]
@@ -657,7 +666,14 @@ def test_outline_size_label_appears_before_counters(java_dir):
 
 
 def test_outline_size_label_present_for_every_language(
-    csharp_dir, python_dir, java_dir, kotlin_dir, scala_dir, go_dir, fixtures_dir
+    csharp_dir,
+    python_dir,
+    java_dir,
+    kotlin_dir,
+    scala_dir,
+    go_dir,
+    swift_dir,
+    fixtures_dir,
 ):
     """The label is computed from source bytes — must work universally
     without per-adapter changes."""
@@ -668,6 +684,7 @@ def test_outline_size_label_present_for_every_language(
         KotlinAdapter().parse(kotlin_dir / "user_service.kt"),
         ScalaAdapter().parse(scala_dir / "user_service.scala"),
         GoAdapter().parse(go_dir / "user_service.go"),
+        SwiftAdapter().parse(swift_dir / "user_service.swift"),
         TypeScriptAdapter().parse(fixtures_dir / "typescript" / "storage_service.ts"),
         MarkdownAdapter().parse(fixtures_dir / "markdown" / "readme_style.md"),
     ]

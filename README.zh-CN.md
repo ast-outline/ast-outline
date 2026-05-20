@@ -169,6 +169,7 @@ ast-outline prompt | pbcopy   # macOS 剪贴板
 | Rust       | `.rs` |
 | PHP        | `.php`、`.phtml`、`.phps`、`.php8` *(PHP 8.x + 7.4 LTS；已在 WordPress 核心上验证)* |
 | Ruby       | `.rb`、`.rake`、`.gemspec`、`.ru`、`Rakefile`、`Gemfile` *（含 Rails 关联）* |
+| Swift      | `.swift` |
 | CSS        | `.css` |
 | SCSS       | `.scss` |
 | SQL        | `.sql` *（主要面向 PostgreSQL；MySQL / SQLite 可用）* |

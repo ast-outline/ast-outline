@@ -1,8 +1,7 @@
 """Per-language tests for `ParseResult.imports`.
 
-Covers all 9 code adapters (csharp/python/typescript/java/kotlin/scala/
-go/rust/php). Markdown and YAML adapters have no imports concept so are
-not exercised here.
+Covers code adapters that expose source-language imports. Markdown and
+YAML adapters have no imports concept so are not exercised here.
 
 Each test writes a minimal source file to a tmp_path, runs the adapter,
 and asserts the normalized source-true import strings match exactly.
@@ -22,6 +21,7 @@ from ast_outline.adapters.php import PhpAdapter
 from ast_outline.adapters.python import PythonAdapter
 from ast_outline.adapters.rust import RustAdapter
 from ast_outline.adapters.scala import ScalaAdapter
+from ast_outline.adapters.swift import SwiftAdapter
 from ast_outline.adapters.typescript import TypeScriptAdapter
 
 
@@ -435,6 +435,12 @@ def test_each_adapter_wires_collect_imports_into_parse_result(tmp_path: Path) ->
         (RustAdapter(), "m.rs", "use foo::Bar;\nfn main() {}\n", "use foo::Bar"),
         (CSharpAdapter(), "M.cs", "using System;\nnamespace X { class M {} }\n", "using System"),
         (PhpAdapter(), "m.php", "<?php\nuse App\\Foo;\nclass M {}\n", "use App\\Foo"),
+        (
+            SwiftAdapter(),
+            "M.swift",
+            "import Foundation\nclass M {}\n",
+            "import Foundation",
+        ),
     ]
     for adapter, name, content, expected_first in cases:
         p = _write(tmp_path, name, content)

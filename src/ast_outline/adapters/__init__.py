@@ -34,6 +34,7 @@ from .rust import RustAdapter
 from .scala import ScalaAdapter
 from .scss import ScssAdapter
 from .sql import SqlAdapter
+from .swift import SwiftAdapter
 from .typescript import TypeScriptAdapter
 from .yaml import YamlAdapter
 
@@ -54,6 +55,7 @@ ADAPTERS: list[LanguageAdapter] = [
     CssAdapter(),
     ScssAdapter(),
     SqlAdapter(),
+    SwiftAdapter(),
     MarkdownAdapter(),
     YamlAdapter(),
 ]

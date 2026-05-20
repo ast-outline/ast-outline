@@ -1076,6 +1076,7 @@ SUPPORTED LANGUAGES
     Scala       .scala, .sc
     Go          .go
     Lua         .lua, .wlua
+    Swift       .swift
     Markdown    .md
     YAML        .yaml, .yml
 
@@ -1134,7 +1135,7 @@ USAGE
 SUPPORTED
     C# (.cs), Python (.py, .pyi), TypeScript/JavaScript (.ts/.tsx/.js/.jsx),
     Java (.java), Kotlin (.kt, .kts), Scala (.scala, .sc), Go (.go),
-    Lua (.lua, .wlua), Markdown (.md), YAML (.yaml, .yml)
+    Lua (.lua, .wlua), Swift (.swift), Markdown (.md), YAML (.yaml, .yml)
 
 FLAGS
     --no-private    Hide private members (Python: names starting with _)
@@ -1155,6 +1156,7 @@ EXAMPLES
     ast-outline src/ --no-private --no-fields --no-attrs
     ast-outline service.py --imports     # add `# imports: ...` header
     ast-outline Foo.cs Bar.py   # mixed languages at once
+    ast-outline User.swift      # Swift file
     ast-outline src/ --exclude tests/ --exclude '*.gen.*'   # skip tests + generated
 """
 
