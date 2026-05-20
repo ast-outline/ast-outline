@@ -92,3 +92,8 @@ def sql_dir() -> Path:
 @pytest.fixture(scope="session")
 def lua_dir() -> Path:
     return FIXTURES_DIR / "lua"
+
+
+@pytest.fixture(scope="session")
+def swift_dir() -> Path:
+    return FIXTURES_DIR / "swift"

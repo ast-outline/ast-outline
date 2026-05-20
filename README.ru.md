@@ -178,6 +178,8 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
 | Rust       | `.rs` |
 | PHP        | `.php`, `.phtml`, `.phps`, `.php8` *(PHP 8.x + 7.4 LTS; протестировано на ядре WordPress)* |
 | Ruby       | `.rb`, `.rake`, `.gemspec`, `.ru`, `Rakefile`, `Gemfile` *(вкл. Rails-ассоциации)* |
+| Lua        | `.lua`, `.wlua` *(чистый Lua 5.1–5.4; `function M:foo` → метод, метаметоды → оператор; покрывает Neovim, LÖVE, OpenResty, Redis-скрипты)* |
+| Swift      | `.swift` *(структуры, enum, протоколы, extension, actor; дженерики и соответствие протоколам)* |
 | CSS        | `.css` |
 | SCSS       | `.scss` |
 | SQL        | `.sql` *(основной target — PostgreSQL; MySQL / SQLite — рабочие)* |
