@@ -16,6 +16,7 @@ Covers Swift-specific ground:
 from __future__ import annotations
 
 from ast_outline.adapters.swift import SwiftAdapter
+from ast_outline.grep import KIND_COMMENT, KIND_IMPORT, grep
 from ast_outline.core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -489,3 +490,24 @@ def test_failable_init(swift_dir):
 def test_error_count_zero_on_clean_swift(swift_dir):
     r = SwiftAdapter().parse(swift_dir / "user_service.swift")
     assert r.error_count == 0
+
+
+# --- Grep classifier ------------------------------------------------------
+
+
+def test_grep_classifies_swift_import_line(swift_dir):
+    """A match on an `import` line is tagged [import], not a plain ref."""
+    results, _, _ = grep("Foundation", [swift_dir / "user_service.swift"])
+    kinds = [m.kind for fr in results for m in fr.matches]
+    assert KIND_IMPORT in kinds
+
+
+def test_grep_filters_swift_line_comments(swift_dir):
+    """A match inside a `//`/`///` comment is filtered as noise by default
+    and surfaces as a comment match under --include-noise."""
+    src = swift_dir / "user_service.swift"
+    visible, _, _ = grep("Concrete", [src])
+    assert visible[0].filtered_count == 1
+    assert KIND_COMMENT not in [m.kind for m in visible[0].matches]
+    with_noise, _, _ = grep("Concrete", [src], include_noise=True)
+    assert KIND_COMMENT in [m.kind for fr in with_noise for m in fr.matches]

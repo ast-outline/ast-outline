@@ -185,6 +185,7 @@ _COMMENT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
     "scss": ("//",),
     "sql": ("--",),
     "lua": ("--",),
+    "swift": ("//",),
     "markdown": (),  # markdown has no comment syntax we need to skip
 }
 
@@ -226,6 +227,7 @@ _IMPORT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
     # ``require`` call), so single-line ``local X = require("y")`` is
     # classified as import without a brittle prefix match.
     "lua": ("require ", "require("),
+    "swift": ("import ",),
 }
 
 
