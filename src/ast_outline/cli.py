@@ -32,6 +32,7 @@ from .core import (
     render_outline,
     render_signature_view,
 )
+from . import json_output
 
 
 SUBCOMMANDS = {"outline", "show", "help", "digest", "prompt", "setup-prompt", "grep"}
@@ -71,8 +72,9 @@ def _cross_command_flag_hint(
     is `show`-only but tempting to pair with `outline`). Argparse's default
     "unrecognized arguments: --signature" doesn't tell the agent where the
     flag actually lives. This walks all subparsers, looks up each unknown
-    flag, and returns a "(hint: ...)" tail naming the right command.
-    Returns "" when no hint applies.
+    flag, and returns the bare hint text naming the right command. The
+    caller wraps it — `(hint: ...)` for text mode, a JSON field for
+    `--json` mode. Returns "" when no hint applies.
     """
     prefix = "unrecognized arguments: "
     if not message.startswith(prefix):
@@ -102,7 +104,7 @@ def _cross_command_flag_hint(
             hints.append(f"`{flag}` is a flag of {owner_list}{tail}")
     if not hints:
         return ""
-    return " (hint: " + "; ".join(hints) + ")"
+    return "; ".join(hints)
 
 
 # Grep flags that consume a value as the next argv token. Used by
@@ -257,6 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         const="full",
         help="Alias for `--view full` — print full source body (default)",
     )
+    p_show.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text (--view / "
+             "--no-doc are ignored in JSON mode — output is lossless)",
+    )
 
     p_digest = sub.add_parser("digest", help="Compact public-API map of a directory")
     p_digest.add_argument("paths", nargs="+", help="Directories or files")
@@ -304,6 +312,12 @@ def main(argv: list[str] | None = None) -> int:
             "root, so `--exclude src/generated/` works regardless of "
             "cwd. Supports `!` negation. Applies even with --no-ignore."
         ),
+    )
+    p_digest.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text (lossless: "
+             "--format and content-filtering flags are ignored)",
     )
 
     p_help = sub.add_parser("help", help="Show usage guide with examples")
@@ -423,6 +437,12 @@ def main(argv: list[str] | None = None) -> int:
         dest="count_only",
         help="Output only counts per file as 'path:N' (POSIX grep -c)",
     )
+    p_grep.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text (-l / -c are "
+             "ignored in JSON mode — output is lossless)",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -430,7 +450,16 @@ def main(argv: list[str] | None = None) -> int:
         # Bad CLI usage. Surface it as the LLM's response on stdout and
         # exit cleanly so a parallel batch isn't aborted by exit code 2.
         msg = str(e)
-        print(f"# note: {msg}{_cross_command_flag_hint(parser, msg, argv)}")
+        hint = _cross_command_flag_hint(parser, msg, argv)
+        # `args` doesn't exist — argparse failed before producing it.
+        # Detect `--json` directly in argv so a malformed JSON-mode
+        # invocation still gets a valid JSON error document.
+        if "--json" in argv:
+            cmd = argv[0] if argv and argv[0] in SUBCOMMANDS else None
+            print(json_output.error_json(cmd, [msg], hint or None))
+            return 0
+        suffix = f" (hint: {hint})" if hint else ""
+        print(f"# note: {msg}{suffix}")
         return 0
 
     if args.cmd == "help":
@@ -518,6 +547,12 @@ def _add_outline_args(p: argparse.ArgumentParser) -> None:
             "GLOB; repeatable. Patterns are anchored at the project "
             "root. Supports `!` negation. Applies even with --no-ignore."
         ),
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of text (lossless: "
+             "content-filtering flags are ignored in JSON mode)",
     )
 
 
@@ -611,26 +646,68 @@ def _ignore_note(collected: CollectResult, exclude_active: bool = False) -> str 
     )
 
 
+def _strip_note_prefix(s: str) -> str:
+    """Drop a leading `# note: ` / `# hint: ` marker if present.
+
+    Some `# note:` producers (`_validate_exclude`, `_ignore_note`)
+    return strings with the marker already baked in. JSON error
+    objects carry the bare message, so we strip the marker when
+    routing such a string into `error_json`.
+    """
+    for prefix in ("# note: ", "# hint: "):
+        if s.startswith(prefix):
+            return s[len(prefix):]
+    return s
+
+
+def _emit_error(
+    json_mode: bool,
+    command: str | None,
+    notes: list[str],
+    hint: str | None = None,
+) -> int:
+    """Print a user-facing failure, then return 0 (CLI exit-0 invariant).
+
+    In `--json` mode the failure becomes a JSON error document so the
+    consumer can always `json.loads()` stdout. In text mode each note
+    is printed as a `# note:` line (a note that already carries the
+    marker is printed verbatim).
+    """
+    if json_mode:
+        clean = [_strip_note_prefix(n) for n in notes]
+        clean_hint = _strip_note_prefix(hint) if hint else None
+        print(json_output.error_json(command, clean, clean_hint))
+    else:
+        for note in notes:
+            print(note if note.startswith("#") else f"# note: {note}")
+        if hint:
+            print(hint if hint.startswith("#") else f"# hint: {hint}")
+    return 0
+
+
 def _cmd_outline(args) -> int:
+    json_mode = getattr(args, "json", False)
     paths_raw = getattr(args, "paths", None) or []
     if not paths_raw:
         # `# note:` lines go on stdout because they ARE the response to the
         # agent — there's no successful outline to keep clean of warnings.
-        print("# note: no input files. try: ast-outline Player.cs")
-        return 0
+        return _emit_error(
+            json_mode, "outline",
+            ["no input files. try: ast-outline Player.cs"],
+        )
 
     paths = [Path(p) for p in paths_raw]
     missing = [p for p in paths if not p.exists()]
     if missing:
-        for p in missing:
-            print(f"# note: path not found: {p}")
-        return 0
+        return _emit_error(
+            json_mode, "outline",
+            [f"path not found: {p}" for p in missing],
+        )
 
     exclude = getattr(args, "exclude", []) or []
     bad = _validate_exclude(exclude)
     if bad:
-        print(bad)
-        return 0
+        return _emit_error(json_mode, "outline", [bad])
 
     opts = OutlineOptions(
         include_private=not args.no_private,
@@ -650,23 +727,29 @@ def _cmd_outline(args) -> int:
         # happened. Without this, an all-failed batch would print
         # nothing on stdout and the agent shows "(no output)".
         if errors:
-            for f, e in errors:
-                print(f"# note: parse error in {f}: {e}")
-            return 0
+            return _emit_error(
+                json_mode, "outline",
+                [f"parse error in {f}: {e}" for f, e in errors],
+            )
         note = _ignore_note(collected, exclude_active=bool(exclude))
         if note:
             # Empty result + something ignored is the classic "the file
             # you wanted was filtered" trap — surface the filter so the
             # agent doesn't think the path is empty.
-            print(note)
-            return 0
+            return _emit_error(json_mode, "outline", [note])
         exts = sorted(supported_extensions())
-        print(
-            f"# note: no files found matching supported extensions: {exts}"
+        return _emit_error(
+            json_mode, "outline",
+            [f"no files found matching supported extensions: {exts}"],
         )
-        return 0
 
     note = _ignore_note(collected, exclude_active=bool(exclude))
+    if json_mode:
+        advisory = [_strip_note_prefix(note)] if note else []
+        print(json_output.outline_json(results, notes=advisory))
+        for f, e in errors:
+            print(f"# WARN processing {f}: {e}", file=sys.stderr)
+        return 0
     if note:
         print(note)
     for i, r in enumerate(results):
@@ -682,18 +765,28 @@ def _cmd_outline(args) -> int:
 
 
 def _cmd_show(args) -> int:
+    json_mode = getattr(args, "json", False)
     path = Path(args.file)
     if not path.is_file():
-        print(f"# note: file not found: {path}")
-        return 0
+        return _emit_error(json_mode, "show", [f"file not found: {path}"])
     adapter = get_adapter_for(path)
     if adapter is None:
-        print(f"# note: no adapter for extension {path.suffix}")
-        return 0
+        return _emit_error(
+            json_mode, "show", [f"no adapter for extension {path.suffix}"]
+        )
     try:
         result = adapter.parse(path)
     except Exception as e:
-        print(f"# note: parse error in {path}: {e}")
+        return _emit_error(
+            json_mode, "show", [f"parse error in {path}: {e}"]
+        )
+
+    if json_mode:
+        # One entry per queried name: not-found → empty matches list,
+        # ambiguous → several matches. `--view` / `--no-doc` are
+        # ignored — JSON carries the full body and signature.
+        query_results = [(s, find_symbols(result, s)) for s in args.symbols]
+        print(json_output.show_json(str(path), query_results))
         return 0
 
     first = True
@@ -758,18 +851,23 @@ def _cmd_grep(args) -> int:
     """
     from .grep import grep, render_grep, _looks_like_regex, looks_like_ambiguous_regex
 
+    json_mode = getattr(args, "json", False)
+    # Non-fatal advisories (e.g. regex auto-promotion) shown alongside a
+    # successful result. In text mode they print as `# note:` lines; in
+    # JSON mode they ride in the envelope's `notes` field.
+    advisory_notes: list[str] = []
+
     paths = [Path(p) for p in args.paths]
     missing = [p for p in paths if not p.exists()]
     if missing:
-        for p in missing:
-            print(f"# note: path not found: {p}")
-        return 0
+        return _emit_error(
+            json_mode, "grep", [f"path not found: {p}" for p in missing]
+        )
 
     exclude = getattr(args, "exclude", []) or []
     bad = _validate_exclude(exclude)
     if bad:
-        print(bad)
-        return 0
+        return _emit_error(json_mode, "grep", [bad])
 
     # Collect all patterns from the positional slot + every ``-e``
     # flag. Order is preserved (positional first, then -e in CLI
@@ -780,11 +878,11 @@ def _cmd_grep(args) -> int:
         patterns.append(args.pattern)
     patterns.extend(p for p in args.extra_patterns if p)
     if not patterns:
-        print(
-            "# note: no pattern — provide one as positional argument "
-            "or via -e PATTERN (repeatable for multiple)"
+        return _emit_error(
+            json_mode, "grep",
+            ["no pattern — provide one as positional argument "
+             "or via -e PATTERN (repeatable for multiple)"],
         )
-        return 0
 
     # Auto-promote to regex when any pattern carries unambiguous regex
     # syntax (``\|``, ``\d``, bare ``|``, ``(?:`` etc.). Agents fluent
@@ -808,16 +906,20 @@ def _cmd_grep(args) -> int:
             patterns = [p.replace(r"\|", "|") for p in patterns]
             converted = original.replace(r"\|", "|")
             if converted != original:
-                print(
-                    f"# note: {original!r} → {converted!r} "
+                promo = (
+                    f"{original!r} → {converted!r} "
                     f"(auto-promoted to regex; \\| as alternation; "
                     f"pass --regex for raw Python regex semantics)"
                 )
             else:
-                print(
-                    f"# note: pattern {original!r} contains regex syntax — "
+                promo = (
+                    f"pattern {original!r} contains regex syntax — "
                     f"auto-promoted to regex (pass --regex to silence)"
                 )
+            if json_mode:
+                advisory_notes.append(promo)
+            else:
+                print(f"# note: {promo}")
 
     # ``--max-count`` validation: must be a positive integer. Zero and
     # negative values have no useful semantics — ``-m 0`` would render
@@ -825,8 +927,9 @@ def _cmd_grep(args) -> int:
     # want a "did anything match" probe use ``-l`` directly without ``-m``.
     max_count = args.max_count
     if max_count is not None and max_count < 1:
-        print(f"# note: --max-count must be ≥ 1 (got {max_count})")
-        return 0
+        return _emit_error(
+            json_mode, "grep", [f"--max-count must be ≥ 1 (got {max_count})"]
+        )
 
     # ``--kind`` parsing: accept both repeated (``--kind def --kind call``)
     # and comma-separated (``--kind def,call``) forms — agents fluent in
@@ -851,11 +954,11 @@ def _cmd_grep(args) -> int:
                     kinds.add(k)
         invalid = kinds - valid
         if invalid:
-            print(
-                f"# note: invalid --kind value(s): {sorted(invalid)}; "
-                f"valid: {sorted(valid)}"
+            return _emit_error(
+                json_mode, "grep",
+                [f"invalid --kind value(s): {sorted(invalid)}; "
+                 f"valid: {sorted(valid)}"],
             )
-            return 0
         kind_filter = kinds
         if kinds & {KIND_COMMENT, KIND_STRING}:
             include_noise = True
@@ -873,6 +976,12 @@ def _cmd_grep(args) -> int:
         kind_filter=kind_filter,
     )
     if not file_results:
+        # Zero matches is a valid empty result, not an error: JSON mode
+        # emits a normal envelope with an empty `files` array. The text
+        # `# hint:` nudges below are interactive guidance, omitted here.
+        if json_mode:
+            print(json_output.grep_json([], notes=advisory_notes))
+            return 0
         shown = patterns[0] if len(patterns) == 1 else f"{len(patterns)} patterns"
         print(f"# note: no matches for {shown!r}")
         # Universal kind-filter hint: when ``--kind`` was the only thing
@@ -920,6 +1029,12 @@ def _cmd_grep(args) -> int:
                 f"regex, retry with --regex"
             )
         return 0
+    # JSON mode is lossless — `-l` / `-c` are output-shaping flags and
+    # are ignored; the full result set is emitted (the consumer derives
+    # the files list and per-file counts from it).
+    if json_mode:
+        print(json_output.grep_json(file_results, notes=advisory_notes))
+        return 0
     # Output-mode dispatch — ``-l`` and ``-c`` short-circuit the
     # default scope-annotated render with grep-style compact formats
     # familiar from POSIX (``grep -l`` / ``grep -c``). Mutually
@@ -943,17 +1058,18 @@ def _cmd_grep(args) -> int:
 
 
 def _cmd_digest(args) -> int:
+    json_mode = getattr(args, "json", False)
     paths = [Path(p) for p in args.paths]
     missing = [p for p in paths if not p.exists()]
     if missing:
-        for p in missing:
-            print(f"# note: path not found: {p}")
-        return 0
+        return _emit_error(
+            json_mode, "digest",
+            [f"path not found: {p}" for p in missing],
+        )
     exclude = getattr(args, "exclude", []) or []
     bad = _validate_exclude(exclude)
     if bad:
-        print(bad)
-        return 0
+        return _emit_error(json_mode, "digest", [bad])
     # `--oneline` is an alias for `--format=names`. If both are passed
     # they agree on `names`; if only `--oneline` is passed it overrides
     # whatever `--format` defaults to. Keeps the two-knob surface friendly
@@ -995,16 +1111,21 @@ def _cmd_digest(args) -> int:
         # `render_digest([])`) and is misled into thinking the paths
         # had no source files.
         if errors:
-            for f, e in errors:
-                print(f"# note: parse error in {f}: {e}")
-            return 0
+            return _emit_error(
+                json_mode, "digest",
+                [f"parse error in {f}: {e}" for f, e in errors],
+            )
         note = _ignore_note(collected, exclude_active=bool(exclude))
         if note:
-            print(note)
-            return 0
-        print("# note: no supported files found")
-        return 0
+            return _emit_error(json_mode, "digest", [note])
+        return _emit_error(json_mode, "digest", ["no supported files found"])
     note = _ignore_note(collected, exclude_active=bool(exclude))
+    if json_mode:
+        advisory = [_strip_note_prefix(note)] if note else []
+        print(json_output.digest_json(results, notes=advisory))
+        for f, e in errors:
+            print(f"# WARN processing {f}: {e}", file=sys.stderr)
+        return 0
     if note:
         print(note)
     print(render_digest(results, opts), end="")
@@ -1148,6 +1269,8 @@ FLAGS
                     syntax; repeatable; anchored at project root;
                     `!` negates; applies even with --no-ignore)
     --no-ignore     Disable .gitignore / .ignore / hardcoded defaults
+    --json          Emit machine-readable JSON instead of text. Lossless:
+                    content-filtering flags are ignored in JSON mode
 
 EXAMPLES
     ast-outline Foo.cs
@@ -1202,6 +1325,9 @@ FLAGS
     --view {signature,full}
                     Long form of the depth selector. Equivalent to the
                     --signature / --full short flags.
+    --json          Emit machine-readable JSON instead of text. One entry
+                    per requested symbol (not-found = empty match list).
+                    --view / --no-doc are ignored — JSON is lossless.
 """
 
 GUIDE_DIGEST = """\
@@ -1250,6 +1376,9 @@ FLAGS
                         project root; `!` negates; applies even with
                         --no-ignore)
     --no-ignore         Disable .gitignore / .ignore / hardcoded defaults
+    --json              Emit machine-readable JSON instead of text.
+                        Lossless: --format and content-filtering flags
+                        are ignored in JSON mode
 
 EXAMPLES
     ast-outline digest Assets/Scripts
@@ -1378,6 +1507,8 @@ FLAGS
                             (.gitignore syntax; repeatable; anchored
                             at project root; `!` negates; applies
                             even with --no-ignore)
+    --json                  Emit machine-readable JSON instead of text.
+                            -l / -c are ignored — JSON is lossless
 
 EXAMPLES
     ast-outline grep User.save src/

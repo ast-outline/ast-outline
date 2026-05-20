@@ -7,6 +7,58 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [0.9.3] — 2026-05-20
+
+Adds a machine-readable JSON output mode — the opt-in `--json` flag —
+to all four structural commands (`outline`, `digest`, `grep`, `show`).
+The text digest stays the default for humans and LLM agents (it is
+deliberately token-dense and free to change every release); `--json`
+gives **programmatic** consumers — editor plugins, CI gates, scripts —
+a stable, parseable contract instead of forcing them to regex the
+evolving text format.
+
+### Added
+
+- **`--json` flag on `outline`, `digest`, `grep`, `show`.** Emits a
+  single JSON document instead of text. Every document is wrapped in a
+  fixed envelope — `{"tool", "schema_version", "command", ...}` — and
+  carries a `schema_version` (currently `1`) so consumers can detect a
+  breaking change. Static-text commands (`prompt`, `setup-prompt`,
+  `help`) are unaffected — JSON does not apply to them.
+- **Lossless by design.** In `--json` mode every content-filtering flag
+  is ignored — `--no-private` / `--no-fields` / `--no-docs` /
+  `--no-attrs` / `--no-lines` (outline), `--format` / `--include-private`
+  / `--include-fields` / `--max-members` / `--oneline` (digest),
+  `--no-doc` / `--view` (show), `-l` / `-c` (grep). JSON always emits
+  the complete IR — private declarations, all fields, no member caps,
+  all import/noise regions — and the consumer filters itself. Flags
+  that select *which files* to process (`--no-ignore`, `--exclude`,
+  `--glob`) still apply: they shape input, not output.
+- **JSON error objects.** A user-facing failure in `--json` mode
+  (path not found, bad argument, all-files-failed, unsupported
+  extension) is emitted as `{"error": {"notes": [...], "hint": ...}}`
+  rather than a `# note:` text line, so stdout is **always** valid
+  JSON. The exit-0 invariant is preserved. A zero-result search
+  (`grep` with no matches, a file with no declarations) is a valid
+  empty document, not an error.
+- **Derived metrics in the per-file JSON object.** Each file carries
+  the same computed signals the text renderer shows — token estimate,
+  size label (`tiny`/`medium`/`large`/`huge`), and the
+  type/method/field/heading/code-block counters — sourced from the
+  existing `core` helpers so text and JSON never diverge.
+- **New module `ast_outline/json_output.py`.** Pure IR-to-JSON
+  serialization, kept separate from the text renderers so the JSON
+  schema evolves on its own cadence as a contract.
+
+### Notes
+
+- `--json` is `ensure_ascii=False`: Unicode identifiers (Cyrillic,
+  CJK) stay human-readable in the output instead of `\uXXXX` escapes,
+  consistent with the project's non-ASCII source support.
+- The LLM-agent prompt (`ast-outline prompt`) is intentionally
+  unchanged — agents keep using the token-dense text digest; `--json`
+  targets programmatic tooling, not the agent workflow.
+
 ## [0.9.2] — 2026-05-20
 
 Minor release extending the `KIND_BLOCK` callback-DSL recognition added
