@@ -4,6 +4,7 @@ from __future__ import annotations
 from ast_outline.adapters.ruby import RubyAdapter
 from ast_outline.adapters import get_adapter_for, supported_basenames
 from ast_outline.core import (
+    KIND_BLOCK,
     KIND_CLASS,
     KIND_CTOR,
     KIND_FIELD,
@@ -487,16 +488,223 @@ def test_alias_method_inherits_preceding_doc(ruby_dir):
     assert any("backward compatibility" in d for d in full_name.docs)
 
 
-# --- DSL non-recognition --------------------------------------------------
+# --- Callback-DSL blocks (KIND_BLOCK) -------------------------------------
+#
+# Ruby expresses structure through callback-passing calls (RSpec
+# `describe`/`context`/`it`, Rake `task`, route-map `namespace`) that a
+# declaration-only walk misses entirely. These tests pin both the
+# true-positive descent and the false-positive rejections.
 
 
-def test_rspec_describe_block_does_not_emit_declaration(ruby_dir):
-    """RSpec's top-level `describe ... do` is a regular call, not a
-    structural declaration. The adapter must not surface it."""
+def test_callback_blocks_found(ruby_dir):
+    """describe / context / it / let / namespace / task calls become
+    KIND_BLOCK declarations, named after their string / symbol label."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    block_names = {b.name for b in _find_all(r.declarations, kind=KIND_BLOCK)}
+    assert block_names == {
+        "user",                          # let(:user) { ... }
+        "#full_name",                    # describe "#full_name" do
+        "returns the joined name",       # it "..." do
+        "when the name is blank",        # context "..." do
+        "is empty",                      # it "is empty" do
+        "supports the brace block form", # it("...") { ... }
+        "bare describe suite",           # describe "..." do (no RSpec.)
+        "still works",                   # it "still works" do (nested)
+        "db",                            # namespace :db do
+        "migrate",                       # task :migrate do
+    }
+
+
+def test_callback_block_nesting(ruby_dir):
+    """describe → context → it nest correctly; the signature is the call
+    head only — the block body never leaks in."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    suite = _find(r.declarations, kind=KIND_BLOCK, name="#full_name")
+    assert suite is not None
+    assert suite.signature == 'describe "#full_name"'
+    ctx = _find(suite.children, kind=KIND_BLOCK, name="when the name is blank")
+    assert ctx is not None
+    assert ctx.signature == 'context "when the name is blank"'
+    leaf = _find(ctx.children, kind=KIND_BLOCK, name="is empty")
+    assert leaf is not None
+    assert leaf.signature == 'it "is empty"'
+    assert leaf.children == []
+
+
+def test_block_descends_into_declarations(ruby_dir):
+    """A declaration inside a recognised block body becomes its child —
+    `EXPECTED = "..."` inside `describe "#full_name"` is a field."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    suite = _find(r.declarations, kind=KIND_BLOCK, name="#full_name")
+    assert _find(suite.children, kind=KIND_FIELD, name="EXPECTED") is not None
+
+
+def test_brace_block_form_recognised(ruby_dir):
+    """`it("...") { ... }` — the brace block form — is a block too, not
+    only the `do ... end` form."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    brace = _find(
+        r.declarations, kind=KIND_BLOCK, name="supports the brace block form"
+    )
+    assert brace is not None
+    assert brace.signature == 'it("supports the brace block form")'
+
+
+def test_member_call_describe_is_transparently_descended(ruby_dir):
+    """`RSpec.describe User do` is a member call — not promoted to a
+    block named `User`, but its body must still be walked so the nested
+    `describe` / `it` / `let` surface."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    # No block literally named after the `RSpec.describe` argument.
+    assert _find(r.declarations, kind=KIND_BLOCK, name="User") is None
+    # …yet everything inside it is surfaced (hoisted to top level).
+    assert _find(r.declarations, kind=KIND_BLOCK, name="#full_name") is not None
+    assert _find(r.declarations, kind=KIND_BLOCK, name="user") is not None
+
+
+def test_rake_namespace_and_task_blocks(ruby_dir):
+    """Rake's symbol-labelled `namespace :db do` / `task :migrate do`
+    nest as blocks — the Rakefile fixture exercises real Rake DSL."""
+    r = RubyAdapter().parse(ruby_dir / "Rakefile")
+    db = _find(r.declarations, kind=KIND_BLOCK, name="db")
+    assert db is not None
+    assert db.signature == "namespace :db"
+    migrate = _find(db.children, kind=KIND_BLOCK, name="migrate")
+    assert migrate is not None
+    assert migrate.signature == "task :migrate"
+
+
+def test_block_signature_drops_block_body(ruby_dir):
+    """No block signature leaks the `do ... end` body or statements."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    for b in _find_all(r.declarations, kind=KIND_BLOCK):
+        assert " do" not in b.signature
+        assert "{" not in b.signature
+        assert "end" not in b.signature
+        assert len(b.signature) <= 140
+
+
+def test_false_positives_are_not_blocks(ruby_dir):
+    """Calls that resemble callback-DSLs but aren't named containers must
+    NOT be promoted: File.open (member-expression callee), loop (no
+    label), gem (no block), configure (no arguments)."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    block_names = {b.name for b in _find_all(r.declarations, kind=KIND_BLOCK)}
+    for bait in ("config.yml", "open", "loop", "gem", "rspec-rails",
+                 "configure", "port", "set"):
+        assert bait not in block_names
+
+
+def test_helper_def_inside_block_is_a_function(ruby_dir):
+    """A `def` inside a callback block surfaces as a free function — the
+    `make_user` helper inside `RSpec.describe User do`."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    helper = _find(r.declarations, name="make_user")
+    assert helper is not None
+    assert helper.kind == KIND_FUNCTION
+
+
+def test_plain_declarations_unaffected_by_block_rule(ruby_dir):
+    """Ordinary constants / classes / functions next to callback-DSL
+    blocks are still picked up exactly as before."""
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    assert _find(r.declarations, kind=KIND_FIELD, name="CALLBACKS_VERSION") is not None
+    cls = _find(r.declarations, kind=KIND_CLASS, name="PlainClass")
+    assert cls is not None
+    assert _find(cls.children, kind=KIND_METHOD, name="plain_method") is not None
+    fn = _find(r.declarations, kind=KIND_FUNCTION, name="plain_top_level_function")
+    assert fn is not None
+
+
+def test_callbacks_fixture_parses_clean(ruby_dir):
+    r = RubyAdapter().parse(ruby_dir / "callbacks.rb")
+    assert r.error_count == 0
+
+
+def test_ordinary_file_produces_no_blocks(ruby_dir):
+    """Regression guard: the block rule must not fire on a normal
+    class-and-method file with no callback-DSL calls."""
+    for name in ("user.rb", "operators.rb", "visibility.rb"):
+        r = RubyAdapter().parse(ruby_dir / name)
+        assert _find_all(r.declarations, kind=KIND_BLOCK) == []
+
+
+def test_member_call_rspec_describe_surfaces_nested_example(ruby_dir):
+    """`RSpec.describe "User" do / it "is valid" do` in edge_cases.rb:
+    the outer member call is not a block, but the nested `it` is."""
     result = RubyAdapter().parse(ruby_dir / "edge_cases.rb")
-    # No `User` symbol, no `is valid`, etc.
-    assert _find(result.declarations, name="User") is None
-    assert _find(result.declarations, name="describe") is None
+    # The member-call argument "User" is not promoted to a block.
+    assert _find(result.declarations, kind=KIND_BLOCK, name="User") is None
+    # The nested plain-identifier `it` block IS surfaced.
+    valid = _find(result.declarations, kind=KIND_BLOCK, name="is valid")
+    assert valid is not None
+    assert valid.signature == 'it "is valid"'
+
+
+def test_delimited_symbol_label_recognised(tmp_path):
+    """`task :"db:migrate" do` — a quoted/delimited symbol label —
+    is a block, named after the symbol's inner text."""
+    f = tmp_path / "tasks.rake"
+    f.write_text('task :"db:migrate" do\n  run_it\nend\n')
+    r = RubyAdapter().parse(f)
+    block = _find(r.declarations, kind=KIND_BLOCK)
+    assert block is not None
+    assert block.name == "db:migrate"
+    assert block.signature == 'task :"db:migrate"'
+
+
+def test_block_label_keeps_string_interpolation(tmp_path):
+    """An interpolated test description keeps the whole `#{...}` text in
+    the block name — so the digest member token matches the outline
+    header instead of truncating at the first interpolation."""
+    f = tmp_path / "x_spec.rb"
+    f.write_text(
+        'describe "outer" do\n'
+        '  it "handles #{kind} input" do\n'
+        '  end\n'
+        'end\n'
+    )
+    r = RubyAdapter().parse(f)
+    leaf = _find(r.declarations, kind=KIND_BLOCK, name="handles #{kind} input")
+    assert leaf is not None
+
+
+def test_constant_label_is_transparently_descended(tmp_path):
+    """A bare `describe SomeClass do` (constant first arg) is NOT given
+    its own block — a constant is too weak a label discriminator. Its
+    body is still surfaced by transparent descent."""
+    f = tmp_path / "widget_spec.rb"
+    f.write_text(
+        "describe Widget do\n"
+        '  it "works" do\n'
+        "  end\n"
+        "end\n"
+    )
+    r = RubyAdapter().parse(f)
+    assert _find(r.declarations, kind=KIND_BLOCK, name="Widget") is None
+    # …but the nested string-labelled example still surfaces.
+    assert _find(r.declarations, kind=KIND_BLOCK, name="works") is not None
+
+
+def test_private_does_not_flip_a_block_with_a_colliding_name(tmp_path):
+    """`private :full_name` targets the *method* `full_name`, never a
+    `describe "full_name" do` block whose label collides with it."""
+    f = tmp_path / "model.rb"
+    f.write_text(
+        "class Widget\n"
+        '  describe "full_name" do\n'
+        "  end\n"
+        "  def full_name\n"
+        "  end\n"
+        "  private :full_name\n"
+        "end\n"
+    )
+    r = RubyAdapter().parse(f)
+    cls = _find(r.declarations, kind=KIND_CLASS, name="Widget")
+    method = _find(cls.children, kind=KIND_METHOD, name="full_name")
+    block = _find(cls.children, kind=KIND_BLOCK, name="full_name")
+    assert method.visibility == "private"   # the method IS flipped
+    assert block.visibility == ""           # the block is NOT
 
 
 # --- Doc absorption -------------------------------------------------------
@@ -540,6 +748,8 @@ def test_rakefile_parses_without_extension(ruby_dir):
 def test_gemfile_parses_as_ruby(ruby_dir):
     result = RubyAdapter().parse(ruby_dir / "Gemfile")
     assert result.language == "ruby"
-    # Source-true: the Gemfile DSL doesn't produce structural decls
-    # we recognise — but the file should parse cleanly.
     assert result.error_count == 0
+    # `source` / `gem` / `ruby` lines have no block — not surfaced. But
+    # `group :development do ... end` is a symbol-labelled callback block.
+    groups = {b.name for b in _find_all(result.declarations, kind=KIND_BLOCK)}
+    assert groups == {"development", "production"}

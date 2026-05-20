@@ -7,6 +7,47 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [0.9.2] — 2026-05-20
+
+Minor release extending the `KIND_BLOCK` callback-DSL recognition added
+for TypeScript/JavaScript in v0.9.1 to the **Ruby adapter**. RSpec spec
+files (`describe` / `context` / `it`), Rake tasks (`task :build do`),
+route maps (`namespace :admin do` / `resources :users do`) and any
+in-house DSL of the same shape were invisible to the outline — a spec
+file outlined as "no declarations". They are now recognised as `block`
+declarations and descended into. The rule is structural — no hard-coded
+list of framework names — exactly as for TypeScript/JavaScript.
+
+### Added
+
+- **Callback-DSL block recognition (Ruby adapter).** A block-bearing
+  `call` (`do...end` or `{...}`) becomes a `KIND_BLOCK` when (1) its
+  callee is a plain identifier — a member call (`RSpec.describe`,
+  `File.open`) is excluded — and (2) its first argument is a string or
+  symbol label. This covers RSpec (`describe` / `context` / `it` /
+  `feature` / `scenario` / `shared_examples`), Rake (`task` /
+  `namespace`), `ActiveSupport::Concern`'s `concerning`, Sinatra
+  routes, and any in-house DSL of the same shape. Blocks nest, and a
+  `def` / class / constant declared inside a block becomes its child.
+- **Transparent descent through unrecognised wrappers.** A block-bearing
+  call that is not itself a named container — a member call such as
+  `RSpec.describe User do` (the modern RSpec entry point) or
+  `Rails.application.routes.draw do` — still has its body walked, so
+  the plain-identifier blocks nested inside it surface. Without this a
+  modern `RSpec.describe` spec file would still outline as empty.
+
+### Notes
+
+- A *constant* first argument is intentionally not treated as a label:
+  `assert_raises(ArgumentError) { ... }` is structurally identical to
+  `describe User do`, so promoting on a constant produces false
+  positives. A constant-named bare container still has its body
+  surfaced by transparent descent — it simply isn't given its own
+  heading.
+- The block label keeps its full inner text including any `#{...}`
+  interpolation, so the `digest` member token and the `outline` header
+  always agree.
+
 ## [0.9.1] — 2026-05-20
 
 Patch release closing [issue #3](https://github.com/ast-outline/ast-outline/issues/3)

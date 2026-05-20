@@ -123,17 +123,72 @@ Design notes (how Ruby concepts map to the IR):
                                     ``Object`` semantically; for
                                     outline purposes a free function).
 
+Callback-DSL blocks (the KIND_BLOCK rule)
+-----------------------------------------
+A large amount of Ruby structure is expressed through *method calls
+that take a block* rather than through ``def`` / ``class`` / ``module``:
+RSpec suites (``describe`` / ``context`` / ``it`` / ``feature`` /
+``scenario`` / ``shared_examples``), Rake tasks (``task :build do``),
+route maps (``namespace :admin do`` / ``resources :users do``),
+``ActiveSupport::Concern``'s ``concerning "Foo" do``, and any in-house
+DSL of the same shape. tree-sitter parses these as ordinary ``call``
+nodes with a ``do_block`` / ``block`` child, so a declaration-only walk
+misses them — an RSpec spec file would outline as "no declarations".
+
+A block-bearing ``call`` becomes a KIND_BLOCK when, structurally (NOT
+by a hard-coded list of DSL names — see ``_is_block_call``):
+
+1. its callee is a plain identifier — there is no ``receiver``. A
+   member call (``RSpec.describe``, ``File.open``) is excluded so that
+   ``File.open("path") { |f| ... }`` — whose string argument looks
+   exactly like a test label — is never mistaken for a container.
+2. its FIRST argument is a *label* — a string or a symbol. The label
+   is the block's reason to exist (``describe "#full_name"``,
+   ``task :build``, ``namespace :admin``). This rejects label-less
+   wrappers (``loop do``, ``before do``, ``5.times do``) and
+   value-taking blocks (``each_with_object([]) do |…|``). A *constant*
+   first argument is intentionally NOT a label — it is too weak a
+   discriminator (``assert_raises(ArgumentError) { ... }`` and
+   ``describe User do`` are structurally identical), see
+   ``_BLOCK_LABEL_TYPES``.
+
+A block-bearing call that fails either clause is not surfaced itself,
+but its block body is still walked (*transparent descent*) so that
+named containers nested inside an unrecognised wrapper still appear.
+This is what makes a modern ``RSpec.describe User do ... end`` file —
+whose entry point is a member call — outline at all: the outer
+``RSpec.describe`` is skipped, its inner ``describe`` / ``context`` /
+``it`` are surfaced. The same descent reaches ``namespace`` /
+``resources`` blocks nested inside ``Rails.application.routes.draw do``.
+
+A block is named after its label (symbol ``:`` and quotes stripped).
+Its children are whatever the block body declares — nested blocks,
+``def`` helpers, classes, constants. The block body never leaks into
+the signature: ``describe "#full_name" do ... end`` renders as
+``describe "#full_name"``.
+
+Known structural blind spots (a pure shape rule cannot avoid these):
+- A constant-named bare container (``describe User do``) is not given
+  its own ``User`` heading — its body is still surfaced by transparent
+  descent, exactly as the member-call ``RSpec.describe User do`` is.
+- ``catch(:done) do ... end`` — a symbol-labelled control-flow block,
+  promoted to a block named ``done``. Rare as a top-level / class-body
+  statement; harmless when it happens.
+- A string-labelled assertion / test helper that takes a block
+  (``assert_difference("User.count") { ... }``, ``with_env("x") do``)
+  is structurally identical to ``it "..." do`` and is promoted. Rare,
+  and confined to test files; harmless when it happens.
+- A member-call container with no nested plain-identifier blocks
+  (``RSpec.configure do |c|``, an empty ``routes.draw do``) is skipped:
+  its body is descended but holds nothing surfaceable.
+
 Out of scope:
 
 - ``define_method`` / ``method_missing`` and other meta-programming —
-  these declare methods at runtime and tree-sitter can't see what they
-  produce. The outline reflects what the source statically declares.
-- Block-style DSL like RSpec ``describe ... do`` — these parse as
-  ``call`` nodes with ``do_block`` arguments. They're skipped (no
-  decl emitted). An RSpec spec file digests as "no declarations",
-  which is honest: there are no Ruby methods at the top of the file.
-  Future revisions could surface ``describe`` blocks as headings if
-  there's demand.
+  tree-sitter sees only static source, never the methods these create
+  at runtime. A ``define_method(:foo) do ... end`` call itself does
+  surface, as a childless KIND_BLOCK ``foo`` (more visible than the
+  previous "invisible", though labelled ``block`` not ``method``).
 """
 from __future__ import annotations
 
@@ -145,6 +200,7 @@ import tree_sitter_ruby as tsrb
 
 from .base import count_parse_errors
 from ..core import (
+    KIND_BLOCK,
     KIND_CLASS,
     KIND_CTOR,
     KIND_FIELD,
@@ -193,6 +249,25 @@ _RAILS_ASSOCIATIONS: dict[str, str] = {
     "has_and_belongs_to_many": "[habtm]",
 }
 
+# Argument node types that count as a callback-DSL block *label* — the
+# first-argument discriminator in `_is_block_call`. Ruby DSLs name their
+# containers with a string (`describe "..."`), a plain symbol
+# (`task :build`, `namespace :admin`) or a quoted/delimited symbol
+# (`task :"db:migrate"`).
+#
+# A *constant* first argument (`describe User`, `assert_raises(KeyError)`)
+# is deliberately NOT a label. It is too weak a discriminator: a constant
+# is just as likely to be a value passed to an assertion / wrapper
+# (`assert_raises(ArgumentError) { ... }`, `controller(FooController) do
+# ... end`, `rescue_from Error do ... end`) as the name of a container.
+# Dropping it costs almost nothing — a constant-named container such as a
+# bare `describe User do` still has its body surfaced by transparent
+# descent (exactly as the member-call `RSpec.describe User do` is), it
+# simply isn't given a top-level `User` heading.
+_BLOCK_LABEL_TYPES = frozenset(
+    {"string", "simple_symbol", "delimited_symbol"}
+)
+
 
 class RubyAdapter:
     language_name = "ruby"
@@ -228,18 +303,51 @@ class RubyAdapter:
 
 
 def _walk_top(root: Node, src: bytes, out: list[Declaration]) -> None:
-    """Walk the program node, accumulating preceding ``#`` comments as
-    docs for the next class/module/method declaration."""
+    """Walk the program node — see ``_walk_statements``."""
+    out.extend(_walk_statements(root.named_children, src, scope="top"))
+
+
+def _walk_statements(
+    named: list[Node], src: bytes, *, scope: str
+) -> list[Declaration]:
+    """Shared walk for the program root, a module body and a callback
+    block body. Accumulates preceding ``#`` comments as docs for the next
+    declaration, and turns ``call`` nodes into KIND_BLOCK declarations
+    (or transparently descends them — see ``_call_to_decls``).
+
+    The class body is NOT walked here — it needs the visibility state
+    machine and the attr/mixin/Rails macros; see ``_walk_class_body``.
+    """
+    out: list[Declaration] = []
     pending_docs: list[str] = []
-    for child in root.named_children:
+    for child in named:
         t = child.type
         if t == "comment":
             pending_docs.append(_text(child, src).strip())
             continue
+        if t == "call":
+            decls = _call_to_decls(child, src)
+            if decls and _is_block_call(child):
+                # Leading docs attach to a *directly promoted* block. If
+                # `decls` came from transparent descent of an
+                # unrecognised wrapper (`# comment` \n `RSpec.describe
+                # ... do`), the comment belonged to the invisible
+                # wrapper — drop it rather than misattribute it to the
+                # first hoisted child.
+                decls[0].docs = pending_docs + decls[0].docs
+                decls[0].doc_start_byte = _doc_start_byte(
+                    decls[0], pending_docs, child, src
+                )
+            out.extend(decls)
+            # A non-block call (`require`, a bare DSL macro) yields no
+            # decl — drop pending docs the same way an unhandled node
+            # would.
+            pending_docs = []
+            continue
         decl = _node_to_decl(
             child,
             src,
-            scope="top",
+            scope=scope,
             current_visibility="",
             singleton=False,
         )
@@ -247,11 +355,9 @@ def _walk_top(root: Node, src: bytes, out: list[Declaration]) -> None:
             decl.docs = pending_docs + decl.docs
             decl.doc_start_byte = _doc_start_byte(decl, pending_docs, child, src)
             out.append(decl)
-            pending_docs = []
-        else:
-            # Not a declaration we surface — drop pending docs (they
-            # were attached to a non-decl call like RSpec ``describe``).
-            pending_docs = []
+        # Either appended, or not a declaration we surface — drop docs.
+        pending_docs = []
+    return out
 
 
 def _doc_start_byte(
@@ -402,25 +508,154 @@ def _body_statement(node: Node) -> Optional[Node]:
 def _walk_module_body(body: Node, src: bytes) -> list[Declaration]:
     """Walk a module body. Modules don't enforce visibility, so we treat
     members as scope=module with empty visibility tracking."""
-    out: list[Declaration] = []
-    pending_docs: list[str] = []
-    for child in body.named_children:
-        t = child.type
-        if t == "comment":
-            pending_docs.append(_text(child, src).strip())
-            continue
-        decl = _node_to_decl(
-            child, src, scope="module",
-            current_visibility="", singleton=False,
-        )
-        if decl is not None:
-            decl.docs = pending_docs + decl.docs
-            decl.doc_start_byte = _doc_start_byte(decl, pending_docs, child, src)
-            out.append(decl)
-            pending_docs = []
-        else:
-            pending_docs = []
-    return out
+    return _walk_statements(body.named_children, src, scope="module")
+
+
+# --- Callback-DSL blocks --------------------------------------------------
+#
+# See the module docstring ("Callback-DSL blocks") for the rationale. The
+# rule is structural — no hard-coded list of `describe` / `task` /
+# `namespace` names — so it survives new test frameworks and new DSL
+# libraries without code changes.
+
+
+def _call_to_decls(node: Node, src: bytes) -> list[Declaration]:
+    """Turn a ``call`` node into zero or more declarations.
+
+    A call carries structure only when it has a *block* (``do...end`` or
+    ``{...}``). Three outcomes:
+
+    * **Named container** — a plain-identifier callee whose first
+      argument is a string / symbol / constant label (``describe "..."``,
+      ``task :build``, ``namespace :admin``, ``concerning "Foo"``).
+      Returns a single KIND_BLOCK whose children are the declarations
+      inside the block.
+    * **Block-bearing, not a container** — a member-call callee
+      (``RSpec.describe``, ``File.open``) or a label-less wrapper
+      (``before do``, ``loop do``). The call is not surfaced itself, but
+      its block body is walked so any named containers nested inside it
+      still surface — this is what lets a modern ``RSpec.describe User
+      do ... end`` file (entry point is a member call) outline at all.
+    * **No block** (``require "x"``, ``gem "rails"``) — returns ``[]``;
+      such calls are handled elsewhere or are not declarations.
+    """
+    block = node.child_by_field_name("block")
+    if block is None:
+        return []
+    if _is_block_call(node):
+        return [_block_to_decl(node, src, block)]
+    # Block-bearing but not a named container — descend transparently so
+    # plain-identifier blocks nested inside an unrecognised wrapper still
+    # surface.
+    return _walk_block_body(block, src)
+
+
+def _is_block_call(node: Node) -> bool:
+    """True when a block-bearing ``call`` is a *named container* worth
+    surfacing as a KIND_BLOCK.
+
+    Structural, NOT a name list:
+
+    1. the callee is a plain identifier — there is no ``receiver``
+       field. A member call (``RSpec.describe``, ``File.open``) is
+       excluded so a ``File.open("path") { |f| ... }`` is never mistaken
+       for a container (its string argument looks exactly like a test
+       label).
+    2. the FIRST argument is a label — a string or a symbol (see
+       ``_BLOCK_LABEL_TYPES``; a constant is intentionally excluded).
+       This separates ``describe "suite" do`` (the label is the block's
+       reason to exist) from ``loop do`` / ``before do`` (a label-less
+       wrapper) and from ``each_with_object([]) do |…|`` (first arg is
+       not a label).
+
+    A member-call container (``RSpec.describe User do``) fails clause 1
+    on purpose — it is reached by transparent descent instead, which
+    surfaces its nested plain-identifier blocks. See ``_call_to_decls``.
+    """
+    if node.child_by_field_name("receiver") is not None:
+        return False
+    method = node.child_by_field_name("method")
+    if method is None or method.type != "identifier":
+        return False
+    args = node.child_by_field_name("arguments")
+    named = args.named_children if args is not None else []
+    return bool(named) and named[0].type in _BLOCK_LABEL_TYPES
+
+
+def _block_label(node: Node, src: bytes) -> str:
+    """Human-readable name of a block — its first argument with quoting
+    stripped: ``describe "#full_name"`` → ``#full_name``,
+    ``task :build`` → ``build``, ``task :"db:migrate"`` → ``db:migrate``.
+
+    The whole inner text is kept, including any ``#{...}`` interpolation
+    (``it "handles #{kind}"`` → ``handles #{kind}``) — the same text the
+    block's signature carries and the same way the TypeScript adapter
+    labels its blocks, so the digest member token and the outline header
+    never disagree.
+
+    Only ever called for a call ``_is_block_call`` accepted, so the first
+    argument is always a string or symbol.
+    """
+    args = node.child_by_field_name("arguments")
+    named = args.named_children if args is not None else []
+    if not named:
+        return "?"
+    first = named[0]
+    text = _collapse_ws(_text(first, src))
+    if first.type == "delimited_symbol" and text.startswith(":"):
+        text = text[1:]                 # `:"db:migrate"` → `"db:migrate"`
+    if len(text) >= 2 and text[0] in "\"'" and text[-1] == text[0]:
+        text = text[1:-1]               # strip a matching pair of quotes
+    elif first.type == "simple_symbol" and text.startswith(":"):
+        text = text[1:]                 # `:build` → `build`
+    return text or "?"
+
+
+def _block_to_decl(node: Node, src: bytes, block: Node) -> Declaration:
+    """Build a KIND_BLOCK from a named-container ``call``.
+
+    The signature is the call head up to (not including) the ``do`` /
+    ``{`` — so ``describe "#full_name" do ... end`` renders as
+    ``describe "#full_name"``, the block body never leaking into the
+    outline. Children are whatever the block body declares.
+    """
+    sig = _collapse_ws(
+        src[node.start_byte:block.start_byte].decode("utf8", errors="replace")
+    ).rstrip()
+    if len(sig) > 140:
+        sig = sig[:137] + "..."
+    return Declaration(
+        kind=KIND_BLOCK,
+        name=_block_label(node, src),
+        signature=sig,
+        start_line=node.start_point[0] + 1,
+        end_line=node.end_point[0] + 1,
+        start_byte=node.start_byte,
+        end_byte=node.end_byte,
+        doc_start_byte=node.start_byte,
+        children=_walk_block_body(block, src),
+    )
+
+
+def _walk_block_body(block: Node, src: bytes) -> list[Declaration]:
+    """Walk the body of a ``do_block`` / ``block`` node. ``do...end``
+    wraps its statements in a ``body_statement``; the brace form
+    ``{ ... }`` uses a ``block_body``. An empty block has neither —
+    return ``[]``.
+
+    The body is walked with scope=top so a ``def`` helper inside a
+    ``describe`` block reads as a free function (KIND_FUNCTION), matching
+    how the TypeScript adapter treats a function declared inside a
+    callback block.
+    """
+    inner: Optional[Node] = None
+    for c in block.named_children:
+        if c.type in ("body_statement", "block_body"):
+            inner = c
+            break
+    if inner is None:
+        return []
+    return _walk_statements(inner.named_children, src, scope="top")
 
 
 # --- class ----------------------------------------------------------------
@@ -545,8 +780,23 @@ def _walk_class_body(
             if handled is not None:
                 pending_docs = []
                 continue
-            # Unhandled call (RSpec describe, custom DSL, etc.) — not
-            # a structural decl. Drop docs.
+            # Unhandled call — may be a callback-DSL block
+            # (`concerning "Foo" do`, an in-class `describe`, …) or a
+            # member-call wrapper around such blocks. `_call_to_decls`
+            # returns 0+ KIND_BLOCK decls; anything else is noise.
+            block_decls = _call_to_decls(child, src)
+            if block_decls:
+                if _is_block_call(child):
+                    # Leading docs attach only to a directly-promoted
+                    # block — not to a transparently-descended child
+                    # (see `_walk_statements`).
+                    block_decls[0].docs = pending_docs + block_decls[0].docs
+                    block_decls[0].doc_start_byte = _doc_start_byte(
+                        block_decls[0], pending_docs, child, src
+                    )
+                for d in block_decls:
+                    d.visibility = current_visibility
+                out.extend(block_decls)
             pending_docs = []
             continue
 
@@ -565,10 +815,15 @@ def _walk_class_body(
             pending_docs = []
 
     # Apply deferred targeted-visibility flips (`private :foo, :bar`).
+    # `private :name` in Ruby targets methods (including attr-generated
+    # accessor methods, which we model as KIND_FIELD) — never a
+    # callback block. Skip KIND_BLOCK so a `describe "full_name" do`
+    # whose label happens to equal a `private :full_name` method name
+    # is not wrongly marked private.
     if deferred_visibility:
         for vis, names in deferred_visibility:
             for d in out:
-                if d.name in names:
+                if d.name in names and d.kind != KIND_BLOCK:
                     d.visibility = vis
 
     return out, mixin_bases

@@ -212,6 +212,40 @@ def test_grep_block_label_is_a_definition(tmp_path: Path) -> None:
     assert _kinds(results) == [KIND_DEF]
 
 
+def test_grep_ruby_callback_block_in_scope_chain(tmp_path: Path) -> None:
+    """A match inside an RSpec `describe`/`it` block reports the block
+    labels as its enclosing scope — the Ruby callback-DSL blocks flow
+    into grep's scope walk like any declaration."""
+    src = tmp_path / "user_spec.rb"
+    src.write_text(
+        'RSpec.describe User do\n'
+        '  describe "#full_name" do\n'
+        '    it "joins the parts" do\n'
+        '      doSomething\n'
+        '    end\n'
+        '  end\n'
+        'end\n'
+    )
+    results, _, _ = grep("doSomething", [src])
+    scopes = _scopes(results)
+    assert scopes == [["#full_name", "joins the parts"]]
+
+
+def test_grep_ruby_block_label_is_a_definition(tmp_path: Path) -> None:
+    """Grepping a Ruby test description matches the block's name token,
+    so it classifies as [def] rather than string-literal noise."""
+    src = tmp_path / "user_spec.rb"
+    src.write_text(
+        'describe "user login flow" do\n'
+        '  it "rejects bad password" do\n'
+        '    check\n'
+        '  end\n'
+        'end\n'
+    )
+    results, _, _ = grep("login flow", [src])
+    assert _kinds(results) == [KIND_DEF]
+
+
 # --- def-detection precision ----------------------------------------------
 
 
