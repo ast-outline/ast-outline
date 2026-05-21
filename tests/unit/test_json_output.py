@@ -18,6 +18,14 @@ import pytest
 from ast_outline import json_output
 from ast_outline.adapters import ADAPTERS, get_adapter_for
 from ast_outline.cli import main
+from ast_outline.core import (
+    KIND_CLASS,
+    KIND_FIELD,
+    KIND_METHOD,
+    KIND_VARIABLE,
+    Declaration,
+    filter_declarations,
+)
 from ast_outline.json_output import SCHEMA_VERSION
 
 
@@ -721,3 +729,172 @@ def test_envelope_field_types(python_dir, capsys):
     assert isinstance(obj["tool"], str)
     assert isinstance(obj["schema_version"], int)
     assert isinstance(obj["command"], str)
+
+
+# --- filter_declarations — the shared content-filter pass -----------------
+#
+# `core.filter_declarations` is the single definition of the content
+# filter that both the JSON serializer and (indirectly) the text
+# renderers rely on. These exercise it directly on hand-built trees.
+
+
+def _decl(kind, name, *, visibility="", docs=None, attrs=None, children=None):
+    return Declaration(
+        kind=kind,
+        name=name,
+        signature=f"{kind} {name}",
+        visibility=visibility,
+        docs=list(docs or []),
+        attrs=list(attrs or []),
+        children=list(children or []),
+    )
+
+
+def test_filter_declarations_drops_private():
+    tree = [
+        _decl(KIND_CLASS, "Pub"),
+        _decl(KIND_CLASS, "Priv", visibility="private"),
+    ]
+    out = filter_declarations(tree, include_private=False, include_fields=True)
+    assert [d.name for d in out] == ["Pub"]
+
+
+def test_filter_declarations_keeps_private_when_included():
+    tree = [_decl(KIND_CLASS, "Priv", visibility="private")]
+    out = filter_declarations(tree, include_private=True, include_fields=True)
+    assert [d.name for d in out] == ["Priv"]
+
+
+def test_filter_declarations_drops_fields():
+    tree = [_decl(KIND_METHOD, "m"), _decl(KIND_FIELD, "f")]
+    out = filter_declarations(tree, include_private=True, include_fields=False)
+    assert [d.name for d in out] == ["m"]
+
+
+def test_filter_declarations_custom_field_kinds():
+    """`field_kinds` widens what counts as field-like — digest passes a
+    set that also covers SCSS `$variable` and markdown code blocks."""
+    tree = [_decl(KIND_FIELD, "f"), _decl(KIND_VARIABLE, "v")]
+    # Default field_kinds is {KIND_FIELD} → the variable survives.
+    out = filter_declarations(tree, include_private=True, include_fields=False)
+    assert [d.name for d in out] == ["v"]
+    # Widened set → the variable is dropped too.
+    out2 = filter_declarations(
+        tree,
+        include_private=True,
+        include_fields=False,
+        field_kinds=frozenset({KIND_FIELD, KIND_VARIABLE}),
+    )
+    assert out2 == []
+
+
+def test_filter_declarations_clears_docs_and_attrs():
+    tree = [_decl(KIND_CLASS, "C", docs=["doc line"], attrs=["@deco"])]
+    kept = filter_declarations(tree, include_private=True, include_fields=True)
+    assert kept[0].docs == ["doc line"] and kept[0].attrs == ["@deco"]
+    stripped = filter_declarations(
+        tree,
+        include_private=True,
+        include_fields=True,
+        include_docs=False,
+        include_attrs=False,
+    )
+    assert stripped[0].docs == [] and stripped[0].attrs == []
+
+
+def test_filter_declarations_recurses_into_children():
+    tree = [
+        _decl(KIND_CLASS, "C", children=[
+            _decl(KIND_METHOD, "pub"),
+            _decl(KIND_METHOD, "priv", visibility="private"),
+            _decl(KIND_FIELD, "fld"),
+        ]),
+    ]
+    out = filter_declarations(tree, include_private=False, include_fields=False)
+    assert [c.name for c in out[0].children] == ["pub"]
+
+
+def test_filter_declarations_does_not_mutate_input():
+    tree = [
+        _decl(KIND_CLASS, "C", docs=["d"], children=[_decl(KIND_FIELD, "f")]),
+    ]
+    filter_declarations(
+        tree, include_private=True, include_fields=False, include_docs=False
+    )
+    # The original tree is untouched — filtering returns a copy.
+    assert tree[0].docs == ["d"]
+    assert [c.name for c in tree[0].children] == ["f"]
+
+
+def test_filter_declarations_identity_when_all_included():
+    tree = [_decl(KIND_CLASS, "C", children=[_decl(KIND_FIELD, "f")])]
+    out = filter_declarations(tree, include_private=True, include_fields=True)
+    assert [d.name for d in out] == ["C"]
+    assert [c.name for c in out[0].children] == ["f"]
+
+
+def test_filter_declarations_empty_input():
+    assert filter_declarations(
+        [], include_private=False, include_fields=False
+    ) == []
+
+
+# --- content-filter coverage: digest fields, SCSS, show --no-doc ----------
+
+
+def test_digest_json_default_hides_fields(python_dir, capsys):
+    """digest's public-API default drops fields from JSON too."""
+    obj = _run_json(["digest", str(python_dir), "--json"], capsys)
+    assert all(d["kind"] != "field" for d in _all_decls(obj))
+
+
+def test_digest_json_include_fields_shows_fields(python_dir, capsys):
+    obj = _run_json(
+        ["digest", str(python_dir), "--include-fields", "--json"], capsys
+    )
+    assert any(d["kind"] == "field" for d in _all_decls(obj))
+
+
+def test_digest_json_scss_variables_are_field_like(scss_dir, capsys):
+    """SCSS `$variable` bindings are field-like for digest — hidden by
+    default, surfaced by --include-fields (the widened field_kinds set)."""
+    default = _run_json(["digest", str(scss_dir), "--json"], capsys)
+    assert all(d["kind"] != "variable" for d in _all_decls(default))
+    with_fields = _run_json(
+        ["digest", str(scss_dir), "--include-fields", "--json"], capsys
+    )
+    assert any(d["kind"] == "variable" for d in _all_decls(with_fields))
+
+
+def test_show_no_doc_strips_docs_from_json_source(python_dir, capsys):
+    """--no-doc removes the leading doc block from each match's source."""
+    base = ["show", str(python_dir / "domain_model.py"),
+            "BaseEntity", "--json"]
+    with_doc = _run_json(base, capsys)["results"][0]["matches"][0]["source"]
+    no_doc = _run_json(
+        base + ["--no-doc"], capsys
+    )["results"][0]["matches"][0]["source"]
+    assert len(no_doc) < len(with_doc)
+    assert "BaseEntity" in no_doc  # the declaration itself is still there
+
+
+def test_counts_stay_full_under_content_filters(python_dir, capsys):
+    """Header `counts` describe the whole file — a stat, not part of the
+    filtered view — so content flags must not change them."""
+    full = _run_json(["outline", str(python_dir), "--json"], capsys)
+    filtered = _run_json(
+        ["outline", str(python_dir),
+         "--no-private", "--no-fields", "--no-docs", "--no-attrs", "--json"],
+        capsys,
+    )
+    assert ([f["counts"] for f in full["files"]]
+            == [f["counts"] for f in filtered["files"]])
+
+
+def test_outline_json_filter_drops_nested_private(python_dir, capsys):
+    """Content filtering reaches nested declarations, not just top level."""
+    obj = _run_json(
+        ["outline", str(python_dir), "--no-private", "--json"], capsys
+    )
+    # _all_decls recurses children — every node, at any depth, is public.
+    assert all(d["visibility"] != "private" for d in _all_decls(obj))
