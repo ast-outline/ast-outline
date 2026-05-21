@@ -2,10 +2,12 @@
 
 **English** · [Русский](./README.ru.md) · [简体中文](./README.zh-CN.md)
 
-> Stateless CLI that prints the **structural shape** of a source file — classes,
-> methods, signatures, line ranges — without method bodies. Plus an AST-aware
-> structural code-grep with scope and kind annotations. Built so LLM coding
-> agents stop reading whole files just to answer *"what's in here?"*.
+> Your AI coding agent reads whole files to understand code. **`ast-outline` lets
+> it pull exactly what it needs** — a whole-repo skeleton, a single file's
+> outline, or one symbol's body — instead of reading files in full. One
+> stateless, tree-sitter-based CLI: map a repo, outline a file, show a symbol,
+> structural-grep for usages, trace imports. Cheaper, faster agent runs that
+> don't drown in large codebases.
 
 [![Code: Apache 2.0](https://img.shields.io/badge/code-Apache%202.0-blue.svg)](./LICENSE)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](./LICENSE-DOCS)

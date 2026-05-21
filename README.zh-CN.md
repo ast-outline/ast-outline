@@ -2,10 +2,10 @@
 
 [English](./README.md) · [Русский](./README.ru.md) · **简体中文**
 
-> 一个无状态 CLI 工具，打印源码的**结构骨架** —— 类、方法、签名、行号范围 ——
-> 但**不包含方法体**。同时提供带 scope 与 kind 注解的 AST 感知结构化
-> code-grep。它的存在是为了让 LLM 编码代理不再为了回答 *"这个文件里都有什么？"*
-> 而读取整个文件。
+> 你的 AI 编码代理为了理解代码会读取整个文件。**`ast-outline` 让它只取所需** ——
+> 整个仓库的骨架、单个文件的大纲，或单个符号的实现 —— 而无需通读文件。一个
+> 无状态、基于 tree-sitter 的 CLI：绘制仓库地图、生成文件大纲、提取符号、
+> 按用法做结构化 grep、追踪导入。让代理运行更省钱、更快，且不会在大型代码库中迷失。
 
 [![Code: Apache 2.0](https://img.shields.io/badge/code-Apache%202.0-blue.svg)](./LICENSE)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](./LICENSE-DOCS)
