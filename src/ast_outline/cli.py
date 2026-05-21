@@ -31,6 +31,7 @@ from .core import (
     render_digest,
     render_outline,
     render_signature_view,
+    strip_leading_doc,
 )
 from . import json_output
 
@@ -262,8 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     p_show.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON instead of text (--view / "
-             "--no-doc are ignored in JSON mode — output is lossless)",
+        help="Emit machine-readable JSON instead of text. An encoding "
+             "switch — --view / --no-doc still apply to each match's "
+             "`source` field.",
     )
 
     p_digest = sub.add_parser("digest", help="Compact public-API map of a directory")
@@ -316,8 +318,9 @@ def main(argv: list[str] | None = None) -> int:
     p_digest.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON instead of text (lossless: "
-             "--format and content-filtering flags are ignored)",
+        help="Emit machine-readable JSON instead of text. An encoding "
+             "switch — --include-private/-fields still apply; the "
+             "--format layout and --max-members cap don't.",
     )
 
     p_help = sub.add_parser("help", help="Show usage guide with examples")
@@ -440,8 +443,9 @@ def main(argv: list[str] | None = None) -> int:
     p_grep.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON instead of text (-l / -c are "
-             "ignored in JSON mode — output is lossless)",
+        help="Emit machine-readable JSON instead of text. An encoding "
+             "switch — query flags still apply; the -l / -c output "
+             "modes don't (paths and counts are derivable from the JSON).",
     )
 
     try:
@@ -551,8 +555,9 @@ def _add_outline_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON instead of text (lossless: "
-             "content-filtering flags are ignored in JSON mode)",
+        help="Emit machine-readable JSON instead of text. An encoding "
+             "switch — content flags (--no-private/-fields/-docs/-attrs) "
+             "still apply; layout flags (--no-lines, --imports) don't.",
     )
 
 
@@ -746,7 +751,7 @@ def _cmd_outline(args) -> int:
     note = _ignore_note(collected, exclude_active=bool(exclude))
     if json_mode:
         advisory = [_strip_note_prefix(note)] if note else []
-        print(json_output.outline_json(results, notes=advisory))
+        print(json_output.outline_json(results, opts=opts, notes=advisory))
         for f, e in errors:
             print(f"# WARN processing {f}: {e}", file=sys.stderr)
         return 0
@@ -783,10 +788,12 @@ def _cmd_show(args) -> int:
 
     if json_mode:
         # One entry per queried name: not-found → empty matches list,
-        # ambiguous → several matches. `--view` / `--no-doc` are
-        # ignored — JSON carries the full body and signature.
+        # ambiguous → several matches. `--view` / `--no-doc` carry
+        # through to each match's `source`, same as the text output.
         query_results = [(s, find_symbols(result, s)) for s in args.symbols]
-        print(json_output.show_json(str(path), query_results))
+        print(json_output.show_json(
+            str(path), query_results, view=args.view, no_doc=args.no_doc
+        ))
         return 0
 
     first = True
@@ -825,17 +832,17 @@ def _cmd_show(args) -> int:
                 sig = render_signature_view(m)
                 if sig:
                     if args.no_doc:
-                        sig = _strip_leading_doc(sig)
+                        sig = strip_leading_doc(sig)
                     print(sig)
                 else:
                     src = m.source
                     if args.no_doc:
-                        src = _strip_leading_doc(src)
+                        src = strip_leading_doc(src)
                     print(src)
             else:
                 src = m.source
                 if args.no_doc:
-                    src = _strip_leading_doc(src)
+                    src = strip_leading_doc(src)
                 print(src)
     return 0
 
@@ -1029,9 +1036,9 @@ def _cmd_grep(args) -> int:
                 f"regex, retry with --regex"
             )
         return 0
-    # JSON mode is lossless — `-l` / `-c` are output-shaping flags and
-    # are ignored; the full result set is emitted (the consumer derives
-    # the files list and per-file counts from it).
+    # `-l` / `-c` are output-mode selectors, not query filters — the
+    # full structured document is emitted regardless (the consumer
+    # derives the files list and per-file counts from it).
     if json_mode:
         print(json_output.grep_json(file_results, notes=advisory_notes))
         return 0
@@ -1122,7 +1129,7 @@ def _cmd_digest(args) -> int:
     note = _ignore_note(collected, exclude_active=bool(exclude))
     if json_mode:
         advisory = [_strip_note_prefix(note)] if note else []
-        print(json_output.digest_json(results, notes=advisory))
+        print(json_output.digest_json(results, opts=opts, notes=advisory))
         for f, e in errors:
             print(f"# WARN processing {f}: {e}", file=sys.stderr)
         return 0
@@ -1133,50 +1140,6 @@ def _cmd_digest(args) -> int:
     for f, e in errors:
         print(f"# WARN processing {f}: {e}", file=sys.stderr)
     return 0
-
-
-def _strip_leading_doc(src: str) -> str:
-    """Strip the doc block from a `show` source slice.
-
-    Two shapes we handle:
-    - C# style: one or more ``///`` lines at the top of the slice.
-    - Python style: a ``def`` / ``class`` / decorator header followed by a
-      triple-quoted docstring as the first body statement.
-    """
-    lines = src.splitlines()
-
-    # C#: strip any leading /// comment lines.
-    i = 0
-    while i < len(lines) and lines[i].lstrip().startswith("///"):
-        i += 1
-    if i > 0:
-        return "\n".join(lines[i:])
-
-    # Python: skip decorators + def/class header, then drop the docstring if
-    # it's the first body statement.
-    j = 0
-    while j < len(lines) and lines[j].lstrip().startswith("@"):
-        j += 1
-    if j < len(lines):
-        header = lines[j].lstrip()
-        if header.startswith(("def ", "async def ", "class ")):
-            k = j + 1
-            while k < len(lines) and not lines[k].strip():
-                k += 1
-            if k < len(lines):
-                doc_line = lines[k].lstrip()
-                for delim in ('"""', "'''"):
-                    if doc_line.startswith(delim):
-                        rest = doc_line[3:]
-                        if delim in rest:
-                            # Single-line docstring
-                            return "\n".join(lines[:k] + lines[k + 1 :])
-                        # Multi-line: find closing delim
-                        end = k + 1
-                        while end < len(lines) and delim not in lines[end]:
-                            end += 1
-                        return "\n".join(lines[:k] + lines[end + 1 :])
-    return src
 
 
 GUIDE_GENERAL = """\
@@ -1270,8 +1233,9 @@ FLAGS
                     syntax; repeatable; anchored at project root;
                     `!` negates; applies even with --no-ignore)
     --no-ignore     Disable .gitignore / .ignore / hardcoded defaults
-    --json          Emit machine-readable JSON instead of text. Lossless:
-                    content-filtering flags are ignored in JSON mode
+    --json          Emit machine-readable JSON instead of text. An
+                    encoding switch — content flags (--no-private etc.)
+                    still apply; layout flags (--no-lines, --imports) don't
 
 EXAMPLES
     ast-outline Foo.cs
@@ -1329,7 +1293,7 @@ FLAGS
                     --signature / --full short flags.
     --json          Emit machine-readable JSON instead of text. One entry
                     per requested symbol (not-found = empty match list).
-                    --view / --no-doc are ignored — JSON is lossless.
+                    --view / --no-doc carry through to each match's source.
 """
 
 GUIDE_DIGEST = """\
@@ -1378,9 +1342,9 @@ FLAGS
                         project root; `!` negates; applies even with
                         --no-ignore)
     --no-ignore         Disable .gitignore / .ignore / hardcoded defaults
-    --json              Emit machine-readable JSON instead of text.
-                        Lossless: --format and content-filtering flags
-                        are ignored in JSON mode
+    --json              Emit machine-readable JSON instead of text. An
+                        encoding switch — --include-private/-fields still
+                        apply; --format layout and --max-members don't
 
 EXAMPLES
     ast-outline digest Assets/Scripts
@@ -1509,8 +1473,9 @@ FLAGS
                             (.gitignore syntax; repeatable; anchored
                             at project root; `!` negates; applies
                             even with --no-ignore)
-    --json                  Emit machine-readable JSON instead of text.
-                            -l / -c are ignored — JSON is lossless
+    --json                  Emit machine-readable JSON instead of text. An
+                            encoding switch — query flags still apply;
+                            -l / -c don't (derivable from the JSON)
 
 EXAMPLES
     ast-outline grep User.save src/

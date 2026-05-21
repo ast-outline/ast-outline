@@ -7,6 +7,48 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [0.9.6] — 2026-05-20
+
+Reworks `--json` (added in v0.9.3) into a **pure encoding switch**, so
+its content matches the text output flag-for-flag — the convention `rg
+--json`, `kubectl -o json`, `eslint --format json` all follow. v0.9.3
+shipped `--json` as "lossless": it ignored every content-filtering flag
+and always emitted the complete IR. That made `--json` behave
+differently from the same command without it, which is the minority
+design. v0.9.6 aligns it: `--json` changes only *how* the output is
+serialized, not *what* it contains.
+
+### Changed
+
+- **`--json` honors content-filtering flags.** `outline --no-private`
+  / `--no-fields` / `--no-docs` / `--no-attrs`, `digest
+  --include-private` / `--include-fields`, and `show --view` /
+  `--no-doc` now apply to the JSON exactly as they apply to the text
+  output. The JSON schema is unchanged — these filters thin arrays and
+  empty sub-lists, they never alter the shape, so a JSON-Schema
+  validation still passes.
+- **`digest --json` defaults to the public-API map.** Because `digest`
+  itself hides private members and fields by default, `digest --json`
+  now does too. Pass `--include-private` / `--include-fields` (or
+  `--format=wide`) for the complete tree — same as the text command.
+  This is a behavior change from v0.9.3, where `digest --json` was
+  always complete.
+- **Layout / output-mode flags stay text-only.** `--no-lines` and
+  `--imports` (outline), the `--format` *layout* dimension and
+  `--max-members` readability cap (digest), and `-l` / `-c` (grep)
+  have no JSON equivalent — JSON has no layout — so they do not affect
+  `--json` output. The `--format` preset's *content* settings still
+  apply, so `--format=wide --json` differs from `--format=default
+  --json`, while `--format=names`/`compact`/`default` — which share
+  the same content — produce identical JSON.
+
+### Added
+
+- **`core.filter_declarations`** — a pure IR→IR transform that prunes a
+  declaration tree by visibility / kind and clears docs / attrs. Shared
+  so the JSON serializer's content filtering has one definition rather
+  than a copy that could drift from the text renderers.
+
 ## [0.9.5] — 2026-05-20
 
 Patch release: the v0.9.4 Swift adapter shipped without `.swift` in

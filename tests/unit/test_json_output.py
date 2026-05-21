@@ -191,32 +191,48 @@ def test_declaration_to_dict_recurses_children(python_dir):
     assert "kind" in child and "name" in child
 
 
-# --- lossless contract ----------------------------------------------------
+# --- content filters apply (rg-model) -------------------------------------
 
 
-def test_json_is_lossless_includes_private(python_dir, capsys):
-    """JSON mode emits private declarations even though the default
-    text digest hides them — content-filtering flags are ignored."""
+def test_digest_json_default_hides_private(python_dir, capsys):
+    """`digest --json` carries the same content as `digest` text — its
+    default is the public-API map, so private declarations are absent."""
+    obj = _run_json(["digest", str(python_dir), "--json"], capsys)
+    visibilities = {d["visibility"] for d in _all_decls(obj)}
+    assert "private" not in visibilities, visibilities
+
+
+def test_digest_json_include_private_shows_private(python_dir, capsys):
+    """`--include-private` brings private declarations into digest JSON."""
     obj = _run_json(
-        ["digest", str(python_dir), "--json", "--format=names"], capsys
+        ["digest", str(python_dir), "--include-private", "--json"], capsys
     )
-    names = [
-        d["name"]
-        for f in obj["files"]
-        for d in f["declarations"]
-    ]
-    # domain_model.py defines `_PRIVATE_CONSTANT` — a private symbol
-    # the default text digest would drop.
-    assert any(n.startswith("_") for n in names), names
+    assert any(d["visibility"] == "private" for d in _all_decls(obj))
 
 
-def test_json_format_flag_ignored(python_dir, capsys):
-    """`--format` does not change JSON output — it stays the full IR."""
-    obj_default = _run_json(["digest", str(python_dir), "--json"], capsys)
-    obj_names = _run_json(
+def test_digest_json_format_layout_does_not_affect_json(python_dir, capsys):
+    """`--format` layout presets that share the same content settings
+    (names / compact / default) produce identical JSON — JSON has no
+    layout, only content."""
+    a = _run_json(["digest", str(python_dir), "--json"], capsys)
+    b = _run_json(
         ["digest", str(python_dir), "--json", "--format=names"], capsys
     )
-    assert obj_default == obj_names
+    c = _run_json(
+        ["digest", str(python_dir), "--json", "--format=compact"], capsys
+    )
+    assert a == b == c
+
+
+def test_digest_json_format_wide_adds_private_and_fields(python_dir, capsys):
+    """`--format=wide` resolves to include-private + include-fields, so
+    its content — and thus its JSON — differs from the default preset."""
+    default = _run_json(["digest", str(python_dir), "--json"], capsys)
+    wide = _run_json(
+        ["digest", str(python_dir), "--json", "--format=wide"], capsys
+    )
+    assert wide != default
+    assert any(d["visibility"] == "private" for d in _all_decls(wide))
 
 
 # --- Unicode --------------------------------------------------------------
@@ -627,31 +643,55 @@ def test_digest_summary_aggregates_counts(python_dir, capsys):
 # --- flag interaction -----------------------------------------------------
 
 
-def test_imports_flag_ignored_in_json(python_dir, capsys):
-    """--imports does not change JSON — imports are always present."""
+def test_imports_flag_does_not_affect_json(python_dir, capsys):
+    """--imports is layout-only (it adds a text header line); the JSON
+    `imports` field is present regardless, so --imports is a no-op here."""
     a = _run_json(["outline", str(python_dir), "--json"], capsys)
     b = _run_json(["outline", str(python_dir), "--imports", "--json"], capsys)
     assert a == b
 
 
-def test_outline_content_flags_ignored_in_json(python_dir, capsys):
-    """outline content-filtering flags are no-ops in JSON mode."""
+def test_no_lines_flag_does_not_affect_json(python_dir, capsys):
+    """--no-lines is layout-only (it hides the `L12` text suffix); JSON
+    line numbers are structural fields, so --no-lines is a no-op here."""
     a = _run_json(["outline", str(python_dir), "--json"], capsys)
-    b = _run_json(
+    b = _run_json(["outline", str(python_dir), "--no-lines", "--json"], capsys)
+    assert a == b
+
+
+def test_outline_content_flags_filter_json(python_dir, capsys):
+    """outline content flags (--no-private/-fields/-docs/-attrs) filter
+    the JSON declaration tree, same as they filter the text output."""
+    full = _run_json(["outline", str(python_dir), "--json"], capsys)
+    filtered = _run_json(
         ["outline", str(python_dir),
-         "--no-private", "--no-fields", "--no-docs",
-         "--no-attrs", "--no-lines", "--json"],
+         "--no-private", "--no-fields", "--no-docs", "--no-attrs", "--json"],
         capsys,
     )
-    assert a == b
+    assert filtered != full
+    decls = _all_decls(filtered)
+    assert all(d["visibility"] != "private" for d in decls)
+    assert all(d["kind"] != "field" for d in decls)
+    assert all(d["docs"] == [] for d in decls)
+    assert all(d["attrs"] == [] for d in decls)
+    # full output still carries all of it.
+    full_decls = _all_decls(full)
+    assert any(d["visibility"] == "private" for d in full_decls)
+    assert any(d["kind"] == "field" for d in full_decls)
 
 
-def test_show_view_and_no_doc_ignored_in_json(python_dir, capsys):
-    """show's --view / --no-doc are no-ops in JSON mode."""
+def test_show_view_signature_trims_json_source(python_dir, capsys):
+    """`--view signature` carries through to the JSON `source` field —
+    it holds the header-only contract, not the full body."""
     base = ["show", str(python_dir / "domain_model.py"), "BaseEntity", "--json"]
-    a = _run_json(base, capsys)
-    b = _run_json(base + ["--signature", "--no-doc"], capsys)
-    assert a == b
+    full = _run_json(base, capsys)
+    sig = _run_json(base + ["--view", "signature"], capsys)
+    full_src = full["results"][0]["matches"][0]["source"]
+    sig_src = sig["results"][0]["matches"][0]["source"]
+    assert len(sig_src.splitlines()) < len(full_src.splitlines())
+    # The standalone `signature` field is unaffected by --view.
+    assert (full["results"][0]["matches"][0]["signature"]
+            == sig["results"][0]["matches"][0]["signature"])
 
 
 # --- multi-file & determinism --------------------------------------------

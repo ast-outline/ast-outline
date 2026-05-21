@@ -6,7 +6,7 @@ outputs (outline, digest) and runs symbol search (find_symbols).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
@@ -271,6 +271,54 @@ class SymbolMatch:
     # `SymbolMatch` by hand (tests, downstream tools) shouldn't break; the
     # built-in search walker always populates it.
     decl: "Declaration | None" = None
+
+
+# --- Declaration filtering ------------------------------------------------
+
+
+def filter_declarations(
+    decls: list[Declaration],
+    *,
+    include_private: bool,
+    include_fields: bool,
+    include_docs: bool = True,
+    include_attrs: bool = True,
+    field_kinds: frozenset[str] = frozenset({KIND_FIELD}),
+) -> list[Declaration]:
+    """Return a pruned deep copy of a declaration tree.
+
+    A pure IR→IR transform. The JSON serializer routes through it so its
+    content filtering matches what the text renderers apply inline:
+
+    - ``include_fields`` False → drop declarations whose kind is in
+      ``field_kinds`` (value bindings — fields / variables / code blocks).
+    - ``include_private`` False → drop ``private``-visibility declarations.
+    - ``include_docs`` / ``include_attrs`` False → clear the ``docs`` /
+      ``attrs`` list on every surviving declaration.
+
+    Filtering recurses through ``children``. The input is never mutated —
+    each surviving node is copied via ``dataclasses.replace``.
+    """
+    out: list[Declaration] = []
+    for d in decls:
+        if not include_fields and d.kind in field_kinds:
+            continue
+        if not include_private and d.visibility == "private":
+            continue
+        out.append(replace(
+            d,
+            docs=list(d.docs) if include_docs else [],
+            attrs=list(d.attrs) if include_attrs else [],
+            children=filter_declarations(
+                d.children,
+                include_private=include_private,
+                include_fields=include_fields,
+                include_docs=include_docs,
+                include_attrs=include_attrs,
+                field_kinds=field_kinds,
+            ),
+        ))
+    return out
 
 
 # --- Renderers ------------------------------------------------------------
@@ -655,6 +703,50 @@ def render_signature_view(match: SymbolMatch, *, max_doc_lines: int = 6) -> str:
         for d in _clip_docs(decl.docs, max_doc_lines):
             lines.append("    " + d)
     return "\n".join(lines)
+
+
+def strip_leading_doc(src: str) -> str:
+    """Strip the doc block from a `show` source slice.
+
+    Two shapes we handle:
+    - C# style: one or more ``///`` lines at the top of the slice.
+    - Python style: a ``def`` / ``class`` / decorator header followed by a
+      triple-quoted docstring as the first body statement.
+    """
+    lines = src.splitlines()
+
+    # C#: strip any leading /// comment lines.
+    i = 0
+    while i < len(lines) and lines[i].lstrip().startswith("///"):
+        i += 1
+    if i > 0:
+        return "\n".join(lines[i:])
+
+    # Python: skip decorators + def/class header, then drop the docstring if
+    # it's the first body statement.
+    j = 0
+    while j < len(lines) and lines[j].lstrip().startswith("@"):
+        j += 1
+    if j < len(lines):
+        header = lines[j].lstrip()
+        if header.startswith(("def ", "async def ", "class ")):
+            k = j + 1
+            while k < len(lines) and not lines[k].strip():
+                k += 1
+            if k < len(lines):
+                doc_line = lines[k].lstrip()
+                for delim in ('"""', "'''"):
+                    if doc_line.startswith(delim):
+                        rest = doc_line[3:]
+                        if delim in rest:
+                            # Single-line docstring
+                            return "\n".join(lines[:k] + lines[k + 1 :])
+                        # Multi-line: find closing delim
+                        end = k + 1
+                        while end < len(lines) and delim not in lines[end]:
+                            end += 1
+                        return "\n".join(lines[:k] + lines[end + 1 :])
+    return src
 
 
 # --- Digest ---------------------------------------------------------------

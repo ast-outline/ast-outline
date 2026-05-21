@@ -30,14 +30,27 @@ import os
 from pathlib import Path
 
 from .core import (
+    KIND_CODE_BLOCK,
+    KIND_FIELD,
+    KIND_VARIABLE,
     Declaration,
+    DigestOptions,
+    OutlineOptions,
     ParseResult,
     SymbolMatch,
     _collect_counts,
     _estimate_tokens,
     _size_label,
+    filter_declarations,
+    render_signature_view,
+    strip_leading_doc,
 )
 from .grep import GrepFileResult, GrepMatch
+
+# Declaration kinds digest treats as "field-like" — hidden together by
+# its `include_fields` toggle. Beyond plain fields: SCSS `$variable`
+# bindings and markdown fenced code blocks.
+_DIGEST_FIELD_KINDS = frozenset({KIND_FIELD, KIND_VARIABLE, KIND_CODE_BLOCK})
 
 # Bump only on a breaking schema change — a renamed, removed or
 # retyped field. Additive optional fields do not require a bump.
@@ -116,10 +129,24 @@ def declaration_to_dict(d: Declaration) -> dict:
     }
 
 
-def parse_result_to_dict(r: ParseResult, *, root: Path | None = None) -> dict:
+def parse_result_to_dict(
+    r: ParseResult,
+    *,
+    root: Path | None = None,
+    declarations: list[Declaration] | None = None,
+) -> dict:
     """Serialize one parsed file. `source` bytes are omitted — the
-    whole-file content has no place in a structural document."""
+    whole-file content has no place in a structural document.
+
+    `declarations` overrides which declaration tree is serialized into
+    the `declarations` field — callers pass a content-filtered tree when
+    flags like `--no-private` are active. Everything else (counts, token
+    estimate, imports, regions) is always computed from the **full**
+    parse result, mirroring the text renderers, whose header counters
+    stay full regardless of content filters.
+    """
     tokens = _estimate_tokens(r.source)
+    decls = r.declarations if declarations is None else declarations
     return {
         "path": _rel_path(r.path, root),
         "language": r.language,
@@ -137,7 +164,7 @@ def parse_result_to_dict(r: ParseResult, *, root: Path | None = None) -> dict:
             {"start": s, "end": e, "kind": k}
             for (s, e, k) in r.noise_regions
         ],
-        "declarations": [declaration_to_dict(d) for d in r.declarations],
+        "declarations": [declaration_to_dict(d) for d in decls],
     }
 
 
@@ -165,7 +192,22 @@ def grep_file_to_dict(fr: GrepFileResult, *, root: Path | None = None) -> dict:
     }
 
 
-def symbol_match_to_dict(m: SymbolMatch) -> dict:
+def symbol_match_to_dict(
+    m: SymbolMatch, *, view: str = "full", no_doc: bool = False
+) -> dict:
+    """Serialize one `show` match.
+
+    `view` / `no_doc` mirror the `--view` / `--no-doc` flags: `view`
+    "signature" trims `source` to the header-only contract; `no_doc`
+    strips the leading doc block. The standalone `signature` field is
+    always the bare signature line, regardless of either flag.
+    """
+    if view == "signature":
+        source = render_signature_view(m) or m.source
+    else:
+        source = m.source
+    if no_doc:
+        source = strip_leading_doc(source)
     return {
         "qualified_name": m.qualified_name,
         "kind": m.kind,
@@ -173,7 +215,7 @@ def symbol_match_to_dict(m: SymbolMatch) -> dict:
         "end_line": m.end_line,
         "ancestor_signatures": list(m.ancestor_signatures),
         "signature": m.decl.signature if m.decl is not None else "",
-        "source": m.source,
+        "source": source,
     }
 
 
@@ -181,12 +223,33 @@ def symbol_match_to_dict(m: SymbolMatch) -> dict:
 
 
 def outline_json(
-    results: list[ParseResult], *, notes: list[str] | None = None
+    results: list[ParseResult],
+    *,
+    opts: OutlineOptions | None = None,
+    notes: list[str] | None = None,
 ) -> str:
-    payload = {
-        "notes": list(notes or []),
-        "files": [parse_result_to_dict(r) for r in results],
-    }
+    """Serialize `outline` output.
+
+    When `opts` is given, its content-filtering toggles (`include_private`,
+    `include_fields`, `include_xml_doc`, `include_attributes` — set by
+    `--no-private` / `--no-fields` / `--no-docs` / `--no-attrs`) are
+    applied to the serialized declaration tree, exactly as the text
+    renderer applies them. Layout-only options (`include_line_numbers`,
+    `show_imports`) have no JSON equivalent and are ignored.
+    """
+    files = []
+    for r in results:
+        decls = r.declarations
+        if opts is not None:
+            decls = filter_declarations(
+                r.declarations,
+                include_private=opts.include_private,
+                include_fields=opts.include_fields,
+                include_docs=opts.include_xml_doc,
+                include_attrs=opts.include_attributes,
+            )
+        files.append(parse_result_to_dict(r, declarations=decls))
+    payload = {"notes": list(notes or []), "files": files}
     return _emit(_envelope("outline", payload))
 
 
@@ -194,11 +257,31 @@ def digest_json(
     results: list[ParseResult],
     root: Path | None = None,
     *,
+    opts: DigestOptions | None = None,
     notes: list[str] | None = None,
 ) -> str:
+    """Serialize `digest` output.
+
+    When `opts` is given, `include_private` / `include_fields` (whatever
+    they resolve to — from the `--format` preset or an explicit
+    `--include-private` / `--include-fields`) filter the declaration
+    tree, so `digest --json` carries the same content `digest` would.
+    The layout dimension of `--format` and the `--max-members` readability
+    cap have no JSON equivalent and are not applied.
+    """
     if root is None:
         root = _common_root([r.path for r in results])
-    files = [parse_result_to_dict(r, root=root) for r in results]
+    files = []
+    for r in results:
+        decls = r.declarations
+        if opts is not None:
+            decls = filter_declarations(
+                r.declarations,
+                include_private=opts.include_private,
+                include_fields=opts.include_fields,
+                field_kinds=_DIGEST_FIELD_KINDS,
+            )
+        files.append(parse_result_to_dict(r, root=root, declarations=decls))
     summary = {
         "files": len(files),
         "types": sum(f["counts"]["types"] for f in files),
@@ -243,6 +326,8 @@ def show_json(
     file: str,
     query_results: list[tuple[str, list[SymbolMatch]]],
     *,
+    view: str = "full",
+    no_doc: bool = False,
     notes: list[str] | None = None,
 ) -> str:
     """Serialize `show` output.
@@ -250,6 +335,10 @@ def show_json(
     `query_results` pairs each requested symbol name with its matches.
     A symbol that was not found is an entry with an empty `matches`
     list; an ambiguous name is an entry with several matches.
+
+    `view` / `no_doc` carry the `--view` / `--no-doc` flags through to
+    each match's `source` field, so `show --json` reflects them the same
+    way the text output does.
     """
     payload = {
         "file": file,
@@ -257,7 +346,10 @@ def show_json(
         "results": [
             {
                 "query": query,
-                "matches": [symbol_match_to_dict(m) for m in matches],
+                "matches": [
+                    symbol_match_to_dict(m, view=view, no_doc=no_doc)
+                    for m in matches
+                ],
             }
             for (query, matches) in query_results
         ],

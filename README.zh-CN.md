@@ -231,9 +231,11 @@ flag 列表与输出格式参考见
 `show` —— 都接受 `--json`：用单个 JSON 文档替代文本输出，带固定的 envelope
 （`tool` / `schema_version` / `command`）。它面向**程序化**消费方 —— 编辑器
 插件、CI 闸门、脚本 —— 这些场景需要稳定、可解析的契约，而不是 token 密集的
-文本格式（文本格式仍是人类与代理的默认输出）。JSON 模式是**无损的** —— 内容
-过滤类 flag 会被忽略，始终输出完整 IR —— 错误也以 JSON `error` 对象输出，
-因此 stdout *始终*是合法 JSON。完整的逐字段 schema 见
+文本格式（文本格式仍是人类与代理的默认输出）。`--json` 是纯粹的**编码开关**：
+内容过滤类 flag（`--no-private`、`--include-fields`、`--view` 等）对 JSON 的
+作用与对文本输出完全一致；只有布局类 flag（`--no-lines`、`--format` 预设、
+`-l` / `-c`）没有 JSON 对应物。错误也以 JSON `error` 对象输出，因此 stdout
+*始终*是合法 JSON。完整的逐字段 schema 见
 [输出格式 → JSON](https://ast-outline.github.io/output-format/#json-output)。
 
 > **CLI 退出码约定。** 面向用户的错误（文件不存在、无匹配、参数错误）会

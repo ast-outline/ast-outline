@@ -239,9 +239,11 @@ fine). All flags and the full output format reference live in
 single JSON document with a fixed envelope (`tool` / `schema_version` /
 `command`). It's for **programmatic** consumers — editor plugins, CI gates,
 scripts — that want a stable, parseable contract instead of the token-dense
-text format (which stays the default for humans and agents). JSON mode is
-**lossless** — content-filtering flags are ignored, the complete IR is always
-emitted — and failures are emitted as a JSON `error` object too, so stdout is
+text format (which stays the default for humans and agents). `--json` is a
+pure **encoding switch**: content-filtering flags (`--no-private`,
+`--include-fields`, `--view`, …) apply exactly as they do to the text output;
+only layout flags (`--no-lines`, `--format` presets, `-l` / `-c`) have no JSON
+equivalent. Failures are emitted as a JSON `error` object too, so stdout is
 *always* valid JSON. Full per-field schema:
 [output format → JSON](https://ast-outline.github.io/output-format/#json-output).
 
