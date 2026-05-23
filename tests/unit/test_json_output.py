@@ -124,7 +124,7 @@ def test_outline_payload_shape(python_dir, capsys):
         assert key in f, f"missing file key: {key}"
     assert f["size"] in ("tiny", "medium", "large", "huge")
     assert set(f["counts"]) == {
-        "types", "methods", "fields", "headings", "code_blocks",
+        "types", "methods", "fields", "headings", "code_blocks", "elements",
     }
 
 
@@ -414,7 +414,7 @@ def test_empty_file_json(lua_dir, capsys):
     assert f["imports"] == []
     assert f["counts"] == {
         "types": 0, "methods": 0, "fields": 0,
-        "headings": 0, "code_blocks": 0,
+        "headings": 0, "code_blocks": 0, "elements": 0,
     }
 
 

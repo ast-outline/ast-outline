@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Signup</title>
+</head>
+<body>
+  <form id="signup" action="/api/users" method="post" enctype="multipart/form-data">
+    <fieldset>
+      <legend>Account</legend>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" placeholder="you@example.com" required>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required>
+
+      <label for="role">Role</label>
+      <select id="role" name="role" required>
+        <option value="">— pick one —</option>
+        <option value="admin">Admin</option>
+        <option value="user" selected>User</option>
+      </select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Preferences</legend>
+      <input type="checkbox" id="newsletter" name="newsletter" checked>
+      <label for="newsletter">Send me updates</label>
+
+      <input type="radio" name="theme" value="light" checked>
+      <input type="radio" name="theme" value="dark">
+
+      <label for="bio">Bio</label>
+      <textarea id="bio" name="bio" required></textarea>
+    </fieldset>
+
+    <button type="submit">Create account</button>
+    <button type="reset" disabled>Reset</button>
+  </form>
+</body>
+</html>

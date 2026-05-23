@@ -23,6 +23,7 @@ from .cpp import CppAdapter
 from .csharp import CSharpAdapter
 from .css import CssAdapter
 from .go import GoAdapter
+from .html import HtmlAdapter
 from .java import JavaAdapter
 from .kotlin import KotlinAdapter
 from .lua import LuaAdapter
@@ -56,6 +57,7 @@ ADAPTERS: list[LanguageAdapter] = [
     ScssAdapter(),
     SqlAdapter(),
     SwiftAdapter(),
+    HtmlAdapter(),
     MarkdownAdapter(),
     YamlAdapter(),
 ]

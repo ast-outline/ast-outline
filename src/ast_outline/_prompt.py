@@ -32,8 +32,9 @@ AGENT_PROMPT = """## Code exploration — prefer `ast-outline` over full reads
 For `.cs`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hh`, `.py`, `.pyi`,
 `.ts`, `.tsx`, `.js`, `.jsx`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`,
 `.go`, `.rs`, `.php`, `.phtml`, `.rb`, `.rake`, `.gemspec`, `.lua`,
-`.swift`, `.css`, `.scss`, `.sql`, `.md`, and `.yaml`/`.yml` files, read
-structure with `ast-outline` before opening full contents.
+`.swift`, `.css`, `.scss`, `.sql`, `.html`, `.htm`, `.md`, and
+`.yaml`/`.yml` files, read structure with `ast-outline` before opening
+full contents.
 
 Pick the smallest of these that answers your question — they're a
 broad-to-narrow menu, not a sequence; skip straight to `show` when
@@ -68,6 +69,10 @@ you already know the symbol:
    `$var`) — pseudos and attribute filters are stripped, so
    `.btn-primary` finds the rule even when it carries `:hover` or
    nests in `.modal`.
+   For html, the symbol is a CSS-selector token (`#hero`, `.site-nav`,
+   `form`, `section#hero`, `[rel=stylesheet]`) — same vocabulary as
+   css/scss; pseudo-classes and descendant combinators aren't
+   supported (use the tag/id/class/attribute form the outline shows).
    For sql, the symbol is a table or column name (`users`,
    `users.email`) — `show users` returns the table definition,
    `show users.email` returns one column line.

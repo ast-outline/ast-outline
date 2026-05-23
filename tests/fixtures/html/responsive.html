@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Responsive images</title>
+</head>
+<body>
+  <main>
+    <picture>
+      <source srcset="/hero.avif" type="image/avif">
+      <source srcset="/hero.webp" type="image/webp">
+      <img src="/hero.jpg" srcset="/hero.jpg 1x, /hero@2x.jpg 2x" alt="Hero image" loading="lazy">
+    </picture>
+
+    <article>
+      <h1>Responsive gallery</h1>
+      <img src="/img/a.jpg" srcset="/img/a.jpg 1x, /img/a@2x.jpg 2x" sizes="(min-width: 640px) 50vw, 100vw" alt="A">
+    </article>
+  </main>
+</body>
+</html>

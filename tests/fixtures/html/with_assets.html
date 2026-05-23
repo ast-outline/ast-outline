@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>With assets</title>
+  <link rel="stylesheet" href="/css/reset.css">
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2">
+  <link rel="icon" href="/favicon.svg">
+  <script src="/js/vendor.js"></script>
+  <script src="/js/app.js" defer></script>
+  <script src="/js/analytics.js" async></script>
+  <style>
+    body { margin: 0; font-family: Inter, sans-serif; }
+    .hero { padding: 4rem 0; }
+  </style>
+  <script>
+    function bootstrap() {
+      console.log("hello");
+    }
+    document.addEventListener("DOMContentLoaded", bootstrap);
+  </script>
+</head>
+<body>
+  <!-- Top of page comment -->
+  <main>
+    <h1 class="hero">Loaded with assets</h1>
+    <!-- Another inline comment about the section below -->
+    <p>Content here.</p>
+  </main>
+</body>
+</html>

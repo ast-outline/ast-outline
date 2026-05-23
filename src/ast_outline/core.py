@@ -83,6 +83,14 @@ KIND_PLACEHOLDER = "placeholder"
 KIND_TABLE = "table"
 KIND_VIEW = "view"
 
+# HTML kind — used by the HTML adapter. One canonical kind covers every
+# element (block, inline, void, self-closing). The renderer differentiates
+# by the selector form in `signature` (`tag`, `tag#id`, `tag.cls`,
+# `tag[attr=val]`, `[import] tag[…]`, heading-preview `h1: text`), not by
+# sub-kinds — same uniform-IR pattern as `KIND_YAML_KEY` covering every
+# YAML construct or `KIND_HEADING` covering every heading level.
+KIND_HTML_ELEMENT = "html_element"
+
 TYPE_KINDS = {KIND_CLASS, KIND_STRUCT, KIND_INTERFACE, KIND_RECORD, KIND_ENUM}
 CALLABLE_KINDS = {KIND_METHOD, KIND_FUNCTION, KIND_CTOR, KIND_DTOR, KIND_OPERATOR, KIND_MIXIN}
 
@@ -446,6 +454,8 @@ def _format_file_header(
         if n_docs > 1:
             parts.append(f"{n_docs} docs")
         order = []
+    elif result.language == "html":
+        order = [("elements", "elements")]
     else:
         order = [("types", "types"), ("methods", "methods"), ("fields", "fields")]
     for key, label in order:
@@ -578,6 +588,7 @@ def _collect_counts(decls: list[Declaration]) -> dict[str, int]:
         "fields": 0,
         "headings": 0,
         "code_blocks": 0,
+        "elements": 0,
     }
     stack: list[Declaration] = list(decls)
     while stack:
@@ -593,6 +604,8 @@ def _collect_counts(decls: list[Declaration]) -> dict[str, int]:
             out["headings"] += 1
         elif k == KIND_CODE_BLOCK:
             out["code_blocks"] += 1
+        elif k == KIND_HTML_ELEMENT:
+            out["elements"] += 1
         # namespace / enum_member / delegate → not counted at top level
         stack.extend(d.children)
     return out
@@ -1244,6 +1257,13 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
     elif result.language in ("css", "scss"):
         flat = _flatten_css(result.declarations, opts)
         headlines = [d.name for d in flat]
+    elif result.language == "html":
+        # Skip the outer html → head/body chrome (always one of each) and
+        # surface the landmark elements directly beneath them. Names
+        # format is "what's on this page at a glance"; ``html / head /
+        # body`` repeated every entry buys nothing.
+        landmarks = _flatten_html_landmarks(result.declarations)
+        headlines = [_html_names_signature(d) for d in landmarks]
     else:
         types = _flatten_types(result.declarations)
         if not opts.include_private:
@@ -1357,6 +1377,24 @@ def _digest_one(
     # agent that needs structure.
     if result.language in ("css", "scss"):
         body = _digest_css(result.declarations, opts, flags=flags)
+        if not body:
+            if is_compact:
+                return []
+            lines[-1] += "  # empty"
+            return lines
+        lines.extend(body)
+        return lines
+
+    # HTML files digest as a hierarchical map (similar to markdown TOC):
+    # top-level elements first, two depth levels of children, deeper
+    # subtrees collapse to a parent line only. ``html`` / ``head`` /
+    # ``body`` count as "free" wrappers — they don't consume depth
+    # budget, so a page rendered as ``html > body > main > section#hero``
+    # still shows ``section#hero`` even though that's four levels deep.
+    if result.language == "html":
+        body = _digest_html(
+            result.declarations, opts, indent=4, depth=1, flags=flags
+        )
         if not body:
             if is_compact:
                 return []
@@ -1706,6 +1744,89 @@ def _digest_markdown(
     return out
 
 
+# Tags treated as "chrome" by HTML digest — wrappers every page has so
+# listing them in the digest adds nothing. The digest walker descends
+# through them transparently (their depth doesn't count against
+# ``opts.max_heading_depth``).
+_HTML_DIGEST_CHROME_TAGS = frozenset({"html", "head", "body"})
+
+
+def _digest_html(
+    decls: list[Declaration],
+    opts: DigestOptions,
+    indent: int,
+    depth: int,
+    flags: Optional[_LegendFlags] = None,
+) -> list[str]:
+    """Render HTML declarations as a depth-limited hierarchical map.
+
+    Top-level ``html`` / ``head`` / ``body`` wrappers are transparent —
+    they neither consume depth budget nor get a line of their own (they
+    appear in every page; the digest is about what's *unique* on this
+    page). Other elements render their signature + line range, and
+    recurse one depth level deeper (matching ``opts.max_heading_depth``
+    semantics).
+
+    Sub-trees that bottom out under the depth cap collapse silently —
+    the parent's line range already covers them, and a per-leaf line
+    would defeat the digest's "page-at-a-glance" purpose.
+    """
+    out: list[str] = []
+    if depth > opts.max_heading_depth:
+        return out
+    pad = " " * indent
+    for d in decls:
+        if d.kind != KIND_HTML_ELEMENT:
+            continue
+        if d.name in _HTML_DIGEST_CHROME_TAGS:
+            # Pass through — don't print, don't charge depth.
+            out.extend(_digest_html(d.children, opts, indent, depth, flags=flags))
+            continue
+        suffix = d.lines_suffix()
+        if suffix and flags is not None:
+            flags.line_range = True
+        out.append(pad + d.signature + suffix)
+        out.extend(
+            _digest_html(d.children, opts, indent + 2, depth + 1, flags=flags)
+        )
+    return out
+
+
+def _flatten_html_landmarks(decls: list[Declaration]) -> list[Declaration]:
+    """Top-level landmarks for ``--format=names`` HTML digests.
+
+    Descends transparently through ``html`` / ``head`` / ``body``
+    wrappers and returns their immediate children. The result is a
+    flat list of "what's on the page" — header / main / nav / footer /
+    sections / forms — without the chrome that's identical on every
+    page. Non-chrome top-level elements are returned as-is.
+    """
+    out: list[Declaration] = []
+    for d in decls:
+        if d.kind != KIND_HTML_ELEMENT:
+            continue
+        if d.name in _HTML_DIGEST_CHROME_TAGS:
+            out.extend(_flatten_html_landmarks(d.children))
+        else:
+            out.append(d)
+    return out
+
+
+def _html_names_signature(d: Declaration) -> str:
+    """Strip the ``[import] `` prefix and ``: heading-text`` suffix from
+    an HTML declaration's signature for the ``--format=names`` digest.
+    Names format puts every entry on one comma-joined line, so heading
+    previews and import markers would bloat it; they're recoverable from
+    the full outline."""
+    sig = d.signature
+    if sig.startswith("[import] "):
+        sig = sig[len("[import] "):]
+    cut = sig.find(": ")
+    if cut >= 0:
+        sig = sig[:cut]
+    return sig.strip()
+
+
 def _flatten_free_functions(decls: list[Declaration], opts: DigestOptions) -> list[Declaration]:
     """Module-level callables/fields that aren't inside a type. Dives through namespaces."""
     out: list[Declaration] = []
@@ -1891,6 +2012,13 @@ import re as _re
 #   "[0].image"             → ["[0]", "image"]
 _QUERY_TOKEN_RE = _re.compile(r"\[[^\]]*\]|[^.\[]+")
 
+# Matches a ``[non-digit…]`` bracket — the discriminator between an HTML
+# attribute selector (``[name=email]``, ``[required]``) and a YAML
+# sequence index (``[0]``, ``[12]``). Used by ``_split_query`` to decide
+# whether a tag-prefixed query like ``tag[…]`` should short-circuit as
+# a single token (HTML) or stay multi-token (legacy YAML behaviour).
+_HTML_ATTR_BRACKET_RE = _re.compile(r"\[[^\d\]]")
+
 # Markdown-numbered-heading short-circuit. Recognises queries shaped
 # like ``"3. Foo"``, ``"4.2 Foo"``, ``"1.2.3. Foo"`` — a numeric
 # prefix (optionally decimal-dotted, optionally trailed by a period)
@@ -1928,6 +2056,17 @@ def _split_query(symbol: str) -> list[str]:
     `["btn-primary"]` (the leading dot stripped) and miss the rule
     whose `match_names` contains the literal `.btn-primary`.
 
+    HTML-style compound selectors that start with a tag name —
+    ``section#hero``, ``button.primary``, ``input[name=email]``,
+    ``section#hero.primary[disabled]`` — are also returned as a single
+    token. The marker is "starts with a letter AND contains ``#`` or
+    ``[`` AND has no whitespace" — the no-whitespace clause prevents
+    swallowing descendant-combinator queries like ``"section .item"``
+    that an agent might paste from CSS muscle memory (those still split
+    naturally on the space and won't match anything, by design — combinators
+    aren't supported). Code symbols are unaffected because they don't
+    contain ``#`` or ``[``.
+
     Markdown numbered-heading queries — ``"3. Foo Bar"``,
     ``"4.2 Decimal Foo"`` — are also returned as a single token.
     ``outline`` prints these headings with the prefix intact (the
@@ -1944,6 +2083,21 @@ def _split_query(symbol: str) -> list[str]:
     if symbol[:1] in ".#%&@:":
         return [symbol]
     if _LEADING_NUMBER_PREFIX_RE.match(symbol):
+        return [symbol]
+    # HTML compound selector starting with a tag name
+    # (`section#hero`, `input[name=email]`, `section#hero.primary[disabled]`).
+    # Markers: leading letter + at least one `#` OR an attribute-style
+    # ``[non-digit…]`` bracket + no whitespace. The non-digit clause keeps
+    # YAML sequence-index paths like ``spec.containers[0].image`` on the
+    # legacy multi-token path (YAML uses numeric brackets, HTML uses named
+    # attribute brackets). The no-whitespace clause prevents swallowing
+    # descendant-combinator queries like ``"section .item"`` that an agent
+    # might paste from CSS muscle memory.
+    if (
+        symbol[:1].isalpha()
+        and not any(ch.isspace() for ch in symbol)
+        and ("#" in symbol or _HTML_ATTR_BRACKET_RE.search(symbol))
+    ):
         return [symbol]
     return _QUERY_TOKEN_RE.findall(symbol)
 

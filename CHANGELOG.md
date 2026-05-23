@@ -7,6 +7,119 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.0.0] — 2026-05-23
+
+First stable release. Adds an HTML language adapter backed by
+`tree-sitter-html` — HTML pages (landing pages, templates,
+documentation sites, form-heavy admin UIs) get the same outline /
+digest / show / grep surface as code, with elements rendered as
+CSS-selector tokens so the same vocabulary covers HTML and CSS / SCSS.
+The release is also a stability marker: 1949 regression tests pass,
+the IR + CLI contract is stable enough that consumers can pin a major
+version and rely on it.
+
+### Added
+
+- **HTML adapter support.** `.html` and `.htm` files are parsed with
+  `tree-sitter-html`. Each element renders as a CSS-selector token —
+  `section#hero`, `header.site-nav`, `input[name=email type=email
+  required]`, `[import] link[rel=stylesheet href=/css/main.css]` —
+  so an agent reading the outline already knows how to address every
+  element via `show <selector>`. Headings (`<h1>`–`<h6>`) carry a
+  60-char text preview (`h1: Pull exactly the context you need`).
+  Bare `<div>` / `<span>` / `<p>` / `<li>` / `<tr>` (no id, no class,
+  no significant attribute) are dropped from the outline as noise but
+  their meaningful descendants float up to the parent's depth.
+  `<svg>` / `<math>` subtrees render the root element only — inline
+  icon paths don't bloat the outline.
+- **`<details>` run collapse.** Three or more consecutive sibling
+  `<details>` elements with no significant attributes collapse to a
+  single synthetic `details ×N` line so FAQ pages don't dominate the
+  outline with identical leaves.
+- **HTML imports.** `<link rel=stylesheet|preload|prefetch|
+  modulepreload|icon|manifest>` and `<script src=…>` are surfaced
+  three ways: the element's signature gets an `[import]` prefix,
+  `ParseResult.imports` lists them as source-true language-native
+  lines so `--imports` shows what the page pulls in, and
+  `import_regions` carries their byte ranges so `grep` classifies
+  inner matches (`main.css`, `analytics.js`) as `[import]` directly.
+- **HTML `grep` classification.** Inline `<script>` and `<style>`
+  bodies plus `<!-- comment -->` blocks land in `noise_regions` and
+  are filtered from `grep` by default. Pass `--include-noise` to
+  surface them when the agent is debugging asset URLs or hunting
+  inline JS.
+- **HTML fixtures and tests.** Coverage includes hierarchy, attribute
+  extraction (id, class, boolean attrs, quote stripping, order),
+  heading previews with truncation, `[import]` classification,
+  `<details>` run-collapse, `<script>` / `<style>` / `<!-- -->`
+  noise filtering, SVG collapse, malformed-input recovery, renderer
+  integration, and grep behavior.
+
+### Hardened (pre-release audit)
+
+The HTML adapter ships with the following edge-case protections from
+day one (informed by a pass over the full CHANGELOG for analogous
+bug fixes in CSS / Markdown / YAML and a sweep of HTML-specific
+corner cases):
+
+- **Class de-duplication.** `class="btn btn primary"` renders as
+  `tag.btn.primary`, not `tag.btn.btn.primary` — first-seen order
+  preserved.
+- **Duplicate same-name attribute last-wins.** `<a href="x" href="y">`
+  renders as `a[href=y]`, matching browser DOM semantics.
+- **Attribute-value quoting.** Values containing whitespace, a
+  closing bracket, or a quote get wrapped in `"…"` with backslash
+  escaping — `[value="Save changes"]` instead of the ambiguous
+  `[value=Save changes …]` that would corrupt multi-pair parsing.
+  The quoted form is valid CSS attribute-selector syntax.
+- **Responsive image support.** `srcset` and `sizes` are in the
+  whitelist for `<img>` and `<source>`. Picture-element galleries
+  show real asset URLs in the outline, not just bare `source` tags.
+- **ERROR-node recovery for templated HTML.** When the top-level
+  walk produces no declarations because tree-sitter wrapped the whole
+  document in a single ERROR (Jinja `{% if %}` at the root, Vue/
+  Svelte raw template, PHP starting with `<?php`), a one-pass
+  recovery walks the ERROR subtree to surface well-formed elements
+  inside. Templated files get a partial outline instead of a blank
+  one — the `# WARNING` line still surfaces the parse errors.
+- **Unicode-safe.** UTF-8 BOM at file start, Cyrillic / Chinese in
+  attribute values, emoji in heading previews — all parse and
+  render without corruption.
+- **CRLF line endings.** Line numbers track visible line numbers on
+  Windows-authored files.
+- **Empty / doctype-only / comment-only files don't crash.** Each
+  produces a clean empty-declarations result.
+- **Long XHTML doctypes parse cleanly** with no error_count bump.
+- **Data-URI / base64 attribute values are truncated** (40 chars)
+  so a 2 MB inline image src doesn't pollute the outline.
+
+### Changed
+
+- **`core._split_query` recognises HTML compound selectors.** Queries
+  like `section#hero.primary[disabled]` short-circuit as a single
+  token (same short-circuit family that already handled CSS sigils
+  `.btn-primary` / `#header`). Code symbols are unaffected — they
+  don't contain `#` or attribute-style `[…]` brackets. YAML
+  sequence-index paths (`spec.containers[0].image`) stay on the
+  legacy multi-token path because the discriminator looks for
+  `[non-digit…]` brackets specifically.
+- **New `elements` counter** in the file-header summary for HTML
+  files (`(53 lines, ~420 tokens, 18 elements)`), mirroring the
+  existing `types/methods/fields` for code, `headings/code blocks`
+  for markdown, and per-doc count for multi-doc YAML.
+
+### Out of scope (deliberate, may revisit)
+
+- `<base href="…">` is not classified as an import (sets base URL,
+  doesn't pull a resource).
+- Inline `<script>` (no `src`) — including `<script type="module">`
+  with import statements — is content, not an import. Bodies go to
+  `noise_regions`; `grep --include-noise` surfaces them.
+- `data-*` / `aria-*` / `role` not promoted to the significant
+  attribute whitelist (would over-inflate the bracketed selector for
+  marginal addressing gain).
+- `<svg>` / `<math>` children not recursed — root element only.
+
 ## [0.9.6] — 2026-05-20
 
 Reworks `--json` (added in v0.9.3) into a **pure encoding switch**, so

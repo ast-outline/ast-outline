@@ -187,6 +187,10 @@ _COMMENT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
     "lua": ("--",),
     "swift": ("//",),
     "markdown": (),  # markdown has no comment syntax we need to skip
+    # HTML only has block comments (``<!--…-->``) which span lines and
+    # are already filtered via ``noise_regions`` populated by the
+    # adapter. The line-prefix heuristic has nothing to add.
+    "html": (),
 }
 
 # Per-language import-line detection. We match the line's leading
@@ -228,6 +232,11 @@ _IMPORT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
     # classified as import without a brittle prefix match.
     "lua": ("require ", "require("),
     "swift": ("import ",),
+    # HTML imports are tag-based (``<link rel=stylesheet>``,
+    # ``<script src=…>``), not line-prefix. The adapter populates
+    # ``import_regions`` instead, and the byte-range path classifies
+    # matches inside those tags as ``[import]`` directly.
+    "html": (),
 }
 
 

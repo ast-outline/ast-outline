@@ -1,2 +1,2 @@
 """ast-outline — AST-based structural outline for source files."""
-__version__ = "0.9.6"
+__version__ = "1.0.0"

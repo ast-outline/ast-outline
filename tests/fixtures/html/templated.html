@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+{% if user.is_authenticated %}
+  <header class="auth-bar">
+    <a href="/account">{{ user.email }}</a>
+    <a href="/logout">Log out</a>
+  </header>
+{% else %}
+  <header class="anon-bar">
+    <a href="/login">Log in</a>
+  </header>
+{% endif %}
+
+<main>
+  <article>
+    <h1>{{ post.title }}</h1>
+    <section id="body">
+      {{ post.body | safe }}
+    </section>
+  </article>
+</main>
+{% endblock %}

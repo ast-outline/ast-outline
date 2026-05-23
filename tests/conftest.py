@@ -97,3 +97,8 @@ def lua_dir() -> Path:
 @pytest.fixture(scope="session")
 def swift_dir() -> Path:
     return FIXTURES_DIR / "swift"
+
+
+@pytest.fixture(scope="session")
+def html_dir() -> Path:
+    return FIXTURES_DIR / "html"
