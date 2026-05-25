@@ -12,6 +12,7 @@ answer) and return 0. Real internal crashes still propagate normally.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -927,6 +928,31 @@ def _cmd_grep(args) -> int:
                 advisory_notes.append(promo)
             else:
                 print(f"# note: {promo}")
+
+    # Validate regex compiles before walking the filesystem. The matcher
+    # combines patterns and compiles again, but a failure there raises
+    # ``re.error`` out of ``grep()`` as an uncaught traceback — violates
+    # the CLI exit-0 invariant. Typical trigger: BRE→Python auto-promote
+    # converts ``\|`` to ``|`` for alternation but leaves a literal ``(``
+    # in the source pattern (e.g. ``foo\|bar\.method(``) — that bare
+    # paren now opens an unterminated group in Python regex.
+    if is_regex:
+        bad: list[tuple[str, re.error]] = []
+        for p in patterns:
+            try:
+                re.compile(p)
+            except re.error as exc:
+                bad.append((p, exc))
+        if bad:
+            notes = [f"invalid regex {p!r}: {exc}" for p, exc in bad]
+            hint = None
+            if not args.regex:
+                hint = (
+                    "auto-promoted from BRE — if ``(`` or ``)`` were "
+                    "meant literally, escape as ``\\(`` / ``\\)``; or "
+                    "pass --regex to write a Python regex directly"
+                )
+            return _emit_error(json_mode, "grep", notes, hint=hint)
 
     # ``--max-count`` validation: must be a positive integer. Zero and
     # negative values have no useful semantics — ``-m 0`` would render

@@ -1824,6 +1824,31 @@ def test_cli_regex_hint_fires_on_dot_wildcard_with_quantifier(
     assert "Bind.*SaveSystem" in output
 
 
+def test_cli_invalid_regex_after_auto_promote_yields_note_not_traceback(
+    tmp_path: Path,
+) -> None:
+    """BRE→Python auto-promote can produce an invalid Python regex when
+    the source pattern carries literal parens: ``foo\\|bar\\.method(``
+    converts to ``foo|bar\\.method(`` — the unescaped ``(`` opens an
+    unterminated group. The CLI must surface a ``# note: invalid
+    regex …`` + ``# hint: …`` and return exit 0, not traceback.
+    """
+    import io
+    import contextlib
+    from ast_outline.cli import main
+    src = tmp_path / "a.py"
+    src.write_text("def foo(): pass\n")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(["grep", r"foo\|bar\.method(", str(src)])
+    out = buf.getvalue()
+    assert rc == 0
+    assert "# note: invalid regex" in out
+    assert "unterminated subpattern" in out
+    assert "# hint:" in out
+    assert "\\(" in out  # the hint mentions escaping parens
+
+
 # --- Per-language KIND classification matrix -----------------------------
 #
 # Each language adapter must classify matches consistently for `--kind`

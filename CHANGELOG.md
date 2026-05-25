@@ -7,6 +7,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.1.0] — 2026-05-25
+
+### Fixed
+
+- **`grep` no longer tracebacks on auto-promoted regex with literal
+  parens.** BRE→Python auto-promote converts `\|` (alternation) but
+  leaves `(` untouched — for a pattern like `foo\|bar\.method(` the
+  resulting Python regex (`foo|bar\.method(`) has an unterminated
+  group and `re.compile` raised, which the CLI did not catch. This
+  violated the CLI exit-0 invariant: agents driving the tool in
+  parallel batches saw a Python traceback and a non-zero exit code
+  instead of the documented `# note: …` line. The CLI now
+  pre-compiles patterns after auto-promote and surfaces a pointed
+  `# note: invalid regex …` + `# hint: …` (suggesting `\(` / `\)` or
+  `--regex`), and returns 0.
+
 ## [1.0.0] — 2026-05-23
 
 First stable release. Adds an HTML language adapter backed by
