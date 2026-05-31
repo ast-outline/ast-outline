@@ -213,6 +213,8 @@ _DETAILS_RUN_COLLAPSE_THRESHOLD = 3
 class HtmlAdapter:
     language_name = "html"
     extensions = {".html", ".htm"}
+    # Markup — elements are tag-based, no leading declaration keyword.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

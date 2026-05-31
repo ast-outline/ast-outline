@@ -73,6 +73,9 @@ _IMPORT_NODE_TYPES = {"import_statement", "use_statement", "forward_statement"}
 class ScssAdapter:
     language_name = "scss"
     extensions = {".scss"}
+    # `@mixin` / `@function` lead with `@`, not a bare identifier — the
+    # keyword-strip shape (`<kw> Identifier`) never applies.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

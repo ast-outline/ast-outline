@@ -86,6 +86,7 @@ _PARSER = Parser(_LANGUAGE)
 class GoAdapter:
     language_name = "go"
     extensions = {".go"}
+    definition_keywords = frozenset({"func", "type"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

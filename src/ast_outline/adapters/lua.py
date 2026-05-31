@@ -106,6 +106,7 @@ _METAMETHODS: frozenset[str] = frozenset({
 class LuaAdapter:
     language_name = "lua"
     extensions = {".lua", ".wlua"}
+    definition_keywords = frozenset({"function"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

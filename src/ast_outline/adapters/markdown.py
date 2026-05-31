@@ -50,6 +50,8 @@ _PARSER = Parser(_LANGUAGE)
 class MarkdownAdapter:
     language_name = "markdown"
     extensions = {".md", ".markdown", ".mdx", ".mdown"}
+    # Narrative document — no declaration keywords.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

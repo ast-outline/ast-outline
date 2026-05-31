@@ -857,7 +857,10 @@ def _cmd_grep(args) -> int:
     class/function and labelled with kind (``def`` / ``call`` /
     ``ref`` / ``import``).
     """
-    from .grep import grep, render_grep, _looks_like_regex, looks_like_ambiguous_regex
+    from .grep import (
+        grep, render_grep, _looks_like_regex, looks_like_ambiguous_regex,
+        strip_definition_keyword, suggest_similar_symbols, KIND_DEF,
+    )
 
     json_mode = getattr(args, "json", False)
     # Non-fatal advisories (e.g. regex auto-promotion) shown alongside a
@@ -891,6 +894,37 @@ def _cmd_grep(args) -> int:
             ["no pattern — provide one as positional argument "
              "or via -e PATTERN (repeatable for multiple)"],
         )
+
+    # Strip a leading definition keyword from a single literal pattern.
+    # Agents habitually type the source-language keyword in front of the
+    # name they want (``enum ItemSoundFamily``, ``class MailSpec``, ``def
+    # foo``). As a literal substring that match starts on the keyword,
+    # not the name token, so the def-classifier labels it ``ref`` and a
+    # ``--kind def`` narrow drops it — a bare "no matches". Search the
+    # identifier instead (so the match lands on the name → ``def``) and,
+    # when the user gave no explicit ``--kind``, auto-narrow to ``def``
+    # (the pattern was definitionally a declaration). Explicit ``--regex``
+    # disables this — power users writing regex mean exactly what they
+    # typed. Only the single-pattern form is handled: with multiple ``-e``
+    # patterns an auto narrow-to-def would be ambiguous.
+    auto_kind_def = False
+    if not args.regex and len(patterns) == 1:
+        stripped = strip_definition_keyword(patterns[0])
+        if stripped is not None:
+            ident, kw = stripped
+            patterns = [ident]
+            auto_kind_def = not args.kind
+            if auto_kind_def:
+                note = (
+                    f"searched {ident!r} as a definition "
+                    f"(stripped leading {kw!r})"
+                )
+            else:
+                note = f"searched {ident!r} (stripped leading {kw!r})"
+            if json_mode:
+                advisory_notes.append(note)
+            else:
+                print(f"# note: {note}")
 
     # Auto-promote to regex when any pattern carries unambiguous regex
     # syntax (``\|``, ``\d``, bare ``|``, ``(?:`` etc.). Agents fluent
@@ -995,6 +1029,11 @@ def _cmd_grep(args) -> int:
         kind_filter = kinds
         if kinds & {KIND_COMMENT, KIND_STRING}:
             include_noise = True
+    elif auto_kind_def:
+        # Keyword-strip set no explicit ``--kind`` but the pattern was a
+        # declaration by construction — narrow to ``def`` so the result
+        # is the definition the agent asked for, not its call sites.
+        kind_filter = {KIND_DEF}
 
     file_results, _ignored_dirs, kind_excluded_counts = grep(
         patterns,
@@ -1028,7 +1067,12 @@ def _cmd_grep(args) -> int:
             not is_regex
             and any(looks_like_ambiguous_regex(p) for p in patterns)
         )
-        if kind_excluded_counts and kind_filter is not None and not regex_hint_pending:
+        kind_hint_fired = (
+            bool(kind_excluded_counts)
+            and kind_filter is not None
+            and not regex_hint_pending
+        )
+        if kind_hint_fired:
             # Stable order: highest-count kind first (most likely what
             # the agent actually wanted), ties broken alphabetically.
             ranked = sorted(
@@ -1061,6 +1105,29 @@ def _cmd_grep(args) -> int:
                 f"(escaped metachar, quantifier, or anchor) — if you meant "
                 f"regex, retry with --regex"
             )
+        # did-you-mean fallback: only when neither the kind-filter hint
+        # nor the regex hint fired (those already explain the empty
+        # result) and the pattern is a single literal identifier. A true
+        # no-match on a bare name is the blind-guess case — agents retry
+        # permuted names (plural/singular, typo); surfacing the closest
+        # real symbol in scope collapses that loop to one corrected call.
+        if (
+            not kind_hint_fired
+            and not regex_hint_pending
+            and len(patterns) == 1
+            and not is_regex
+        ):
+            suggestions = suggest_similar_symbols(
+                patterns[0], paths,
+                no_ignore=args.no_ignore, exclude=exclude,
+            )
+            if suggestions:
+                rendered = ", ".join(
+                    f"{name} ({kind})" if count == 1
+                    else f"{name} ({kind} ×{count})"
+                    for name, kind, count in suggestions
+                )
+                print(f"# hint: did you mean: {rendered}?")
         return 0
     # `-l` / `-c` are output-mode selectors, not query filters — the
     # full structured document is emitted regardless (the consumer

@@ -145,6 +145,9 @@ _PARSER = Parser(_LANGUAGE)
 class RustAdapter:
     language_name = "rust"
     extensions = {".rs"}
+    definition_keywords = frozenset({
+        "fn", "struct", "enum", "trait", "impl", "type", "mod", "union",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

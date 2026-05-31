@@ -50,8 +50,11 @@ Limitations of v1
 """
 from __future__ import annotations
 
+import difflib
 import re
+from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -90,6 +93,84 @@ _VISIBLE_KIND_TAGS = frozenset({KIND_DEF, KIND_IMPORT, KIND_COMMENT, KIND_STRING
 def _kind_tag(kind: str) -> str:
     """Render the trailing ``[<kind>]`` annotation, or empty string."""
     return f" [{kind}]" if kind in _VISIBLE_KIND_TAGS else ""
+
+
+# --- Leading definition-keyword stripping --------------------------------
+#
+# Agents habitually paste the source-language keyword they'd *write* in
+# front of a symbol — ``enum ItemSoundFamily``, ``class MailSpec``,
+# ``def foo``, ``fn bar``, ``type T`` — into the grep pattern. As a
+# literal substring this rarely behaves as intended: on a declaration
+# line like ``public enum ItemSoundFamily {`` the match starts on the
+# keyword, not the name token, so the def-classifier (which requires the
+# match column to fall inside the declaration's name) labels it ``ref``,
+# not ``def`` — and ``--kind def`` then drops it, yielding a bare
+# "no matches". Stripping the keyword and searching the identifier makes
+# the match land on the name token → ``def`` → it survives the filter.
+#
+# The keyword set is owned by the language adapters (each declares its
+# own ``definition_keywords``); ``_definition_keywords()`` unions them.
+# The union — not a per-file lookup — is correct here: the strip happens
+# once for the whole call, before any file is read, and the agent's
+# intent ("I prepended a declaration keyword") is the same regardless of
+# which language the matching file turns out to be. A new adapter that
+# declares its keywords extends the behavior for free.
+
+
+@lru_cache(maxsize=1)
+def _definition_keywords() -> frozenset[str]:
+    """Union of every registered adapter's ``definition_keywords``.
+
+    Adapters that omit the attribute (data / markup languages with no
+    leading declaration keyword) contribute nothing. Cached — the
+    adapter registry is static for a process.
+    """
+    from .adapters import ADAPTERS
+
+    kws: set[str] = set()
+    for adapter in ADAPTERS:
+        kws |= set(getattr(adapter, "definition_keywords", frozenset()))
+    return frozenset(kws)
+
+
+@lru_cache(maxsize=1)
+def _def_keyword_strip_re() -> re.Pattern[str]:
+    """Compile the ``"<keyword> Identifier"`` matcher from the adapter union.
+
+    Anchored end-to-end so it rejects multi-token patterns
+    (``enum Foo : byte``) and anything carrying separators (dots, parens,
+    ``::``) — those are not the habitual "I typed the decl line" shape and
+    stripping them would be guesswork. Keywords are alternated
+    longest-first so e.g. ``function`` wins over ``func`` on ``function
+    Foo``.
+    """
+    kws = _definition_keywords()
+    if not kws:
+        return re.compile(r"(?!)")  # matches nothing
+    alternation = "|".join(
+        re.escape(k) for k in sorted(kws, key=lambda k: (-len(k), k))
+    )
+    return re.compile(
+        r"^(?P<kw>" + alternation + r")"
+        r"\s+(?P<ident>[A-Za-z_][A-Za-z0-9_]*)$"
+    )
+
+
+def strip_definition_keyword(pattern: str) -> tuple[str, str] | None:
+    """Detect the literal ``"<keyword> Identifier"`` shape.
+
+    Returns ``(identifier, keyword)`` when ``pattern`` is exactly a
+    leading definition keyword (the union of every adapter's
+    ``definition_keywords``) followed by whitespace and a single bare
+    identifier — e.g. ``"enum Foo"`` → ``("Foo", "enum")``. Returns
+    ``None`` otherwise (single token, multiple tokens, qualified name,
+    anything with separators). The caller is responsible for only
+    invoking this on literal (non-regex) patterns.
+    """
+    m = _def_keyword_strip_re().match(pattern)
+    if m is None:
+        return None
+    return m.group("ident"), m.group("kw")
 
 
 # Regex-syntax fingerprints that have no literal-string interpretation in
@@ -402,6 +483,105 @@ def grep(
             out.append(file_result)
 
     return out, collected.ignored_dirs, kind_excluded_counts
+
+
+# --- did-you-mean (empty-result recovery) ---------------------------------
+#
+# On a true no-match, the agent's next move is usually a blind retry with
+# a permuted name (singular/plural, a typo, a wrong word) — the
+# transcripts show chains of 5+ such misses. Surfacing the closest real
+# symbol in scope collapses that loop to one corrected call. This is the
+# only code path that parses files with NO positional match, so it is
+# gated behind the empty-result branch in the CLI and bounded by
+# ``_DYM_MAX_FILES`` — a no-match already cost the agent a wasted call,
+# so a bounded parse pass to recover the intended symbol is a good trade,
+# but a pathological monorepo must not turn a no-match into a long stall.
+
+# Upper bound on files parsed to build the suggestion pool. The
+# suggestion is best-effort: if the intended symbol lives past the cap we
+# simply emit no hint (same as the pre-existing behavior), never a wrong
+# one — difflib's cutoff already rejects anything not genuinely close.
+_DYM_MAX_FILES = 2000
+
+# Minimum pattern length to attempt a suggestion. Below this, edit
+# distance is dominated by noise (every 2-3 char token is "close" to
+# dozens of symbols) and the hint would be useless churn.
+_DYM_MIN_PATTERN_LEN = 4
+
+# difflib similarity cutoff (0..1). 0.6 is difflib's own default — high
+# enough to reject blind-guess names that share no structure with real
+# symbols (``JsonStore`` vs ``_atomic_write_json``), low enough to catch
+# plural/singular and single-character typos.
+_DYM_CUTOFF = 0.6
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _walk_declaration_names(
+    decls: list[Declaration], acc: dict[str, list[str]]
+) -> None:
+    """Recursively collect ``name -> [kind, ...]`` over a declaration tree."""
+    for d in decls:
+        if d.name:
+            acc.setdefault(d.name, []).append(d.kind)
+        if d.children:
+            _walk_declaration_names(d.children, acc)
+
+
+def suggest_similar_symbols(
+    pattern: str,
+    paths: list[Path],
+    *,
+    no_ignore: bool = False,
+    exclude: list[str] | None = None,
+    limit: int = 3,
+) -> list[tuple[str, str, int]]:
+    """Best-effort "did you mean" candidates for an empty grep result.
+
+    Parses the files in ``paths`` (capped at ``_DYM_MAX_FILES``), gathers
+    every declaration name, and returns up to ``limit`` names closest to
+    ``pattern`` by ``difflib`` similarity. Each entry is
+    ``(name, kind, count)`` where ``kind`` is the declaration's canonical
+    kind and ``count`` is how many declarations in scope carry that name.
+
+    Returns an empty list when ``pattern`` is not a bare identifier, is
+    too short, or nothing in scope is close enough — the CLI then emits
+    no hint, exactly as before. Never raises: parse failures on
+    individual files are skipped (mirrors ``grep`` itself).
+    """
+    if len(pattern) < _DYM_MIN_PATTERN_LEN or not _IDENTIFIER_RE.match(pattern):
+        return []
+
+    collected = collect_files_with_stats(paths, no_ignore=no_ignore, exclude=exclude)
+    names: dict[str, list[str]] = {}
+    for path in collected.files[:_DYM_MAX_FILES]:
+        adapter = get_adapter_for(path)
+        if adapter is None:
+            continue
+        try:
+            result = adapter.parse(path)
+        except Exception:
+            continue
+        _walk_declaration_names(result.declarations, names)
+
+    # Don't suggest the pattern itself (it can appear as a declaration
+    # name even when no *line* matched — e.g. filtered as noise).
+    candidates = [n for n in names if n != pattern]
+    close = difflib.get_close_matches(
+        pattern, candidates, n=limit, cutoff=_DYM_CUTOFF
+    )
+    out: list[tuple[str, str, int]] = []
+    for name in close:
+        kinds = names[name]
+        # Most common canonical kind wins the label; total carries the
+        # count (overloads / same-name-across-files). Highest count first
+        # (``-count``), ties broken by the alphabetically-first kind, so
+        # the label is deterministic regardless of parse order or hash
+        # seed.
+        counts = Counter(kinds)
+        top = min(counts, key=lambda k: (-counts[k], k))
+        out.append((name, top, len(kinds)))
+    return out
 
 
 def _build_matcher(

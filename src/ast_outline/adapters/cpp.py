@@ -243,6 +243,9 @@ class CppAdapter:
         ".ipp", ".tpp", ".inl",
         ".cppm", ".ixx",
     }
+    definition_keywords = frozenset({
+        "class", "struct", "enum", "union", "namespace",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

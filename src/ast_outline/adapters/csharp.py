@@ -62,6 +62,10 @@ _MEMBER_NODE_KIND = {
 class CSharpAdapter:
     language_name = "csharp"
     extensions = {".cs"}
+    definition_keywords = frozenset({
+        "class", "struct", "interface", "enum",
+        "record", "delegate", "namespace",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

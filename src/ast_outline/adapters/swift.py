@@ -76,6 +76,9 @@ _PARSER = Parser(_LANGUAGE)
 class SwiftAdapter:
     language_name = "swift"
     extensions = {".swift"}
+    definition_keywords = frozenset({
+        "class", "struct", "enum", "protocol", "func", "extension",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -97,6 +97,8 @@ _MAX_DEPTH = 10
 class YamlAdapter:
     language_name = "yaml"
     extensions = {".yaml", ".yml"}
+    # Data language — no declaration keywords.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

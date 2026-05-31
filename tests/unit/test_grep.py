@@ -19,6 +19,8 @@ from ast_outline.grep import (
     KIND_STRING,
     grep,
     render_grep,
+    strip_definition_keyword,
+    suggest_similar_symbols,
 )
 
 
@@ -3215,3 +3217,337 @@ def test_grep_match_column_is_codepoint_offset(tmp_path: Path) -> None:
     assert matches[0].column == 14, (
         f"column must be a 1-based codepoint offset (14), got {matches[0].column}"
     )
+
+
+# --- (a) leading definition-keyword stripping -----------------------------
+#
+# Agents habitually paste the source-language keyword in front of the
+# symbol they want (``enum ItemSoundFamily``, ``class MailSpec``, ``def
+# foo``). As a literal substring that misbehaves: on the declaration
+# line the match starts on the keyword, not the name token, so the
+# def-classifier labels it ``ref`` and a ``--kind def`` narrow drops it —
+# a bare "no matches". Stripping the keyword and searching the identifier
+# (auto-narrowed to ``def``) is the fix.
+
+
+def test_strip_definition_keyword_unit() -> None:
+    """The pure helper recognizes the ``"<keyword> Identifier"`` shape and
+    rejects everything else."""
+    assert strip_definition_keyword("enum Foo") == ("Foo", "enum")
+    assert strip_definition_keyword("class MailSpec") == ("MailSpec", "class")
+    assert strip_definition_keyword("def foo_bar") == ("foo_bar", "def")
+    assert strip_definition_keyword("fn baz") == ("baz", "fn")
+    assert strip_definition_keyword("type T") == ("T", "type")
+    # Not the shape: single token, keyword-only, multiple tokens,
+    # qualified name, leading non-keyword.
+    assert strip_definition_keyword("Foo") is None
+    assert strip_definition_keyword("enum") is None
+    assert strip_definition_keyword("className") is None
+    assert strip_definition_keyword("enum Foo : byte") is None
+    assert strip_definition_keyword("Foo.Bar") is None
+    assert strip_definition_keyword("widget gadget") is None
+    assert strip_definition_keyword("enum  Foo") == ("Foo", "enum")  # extra space ok
+
+
+def test_definition_keywords_sourced_from_adapters() -> None:
+    """The strip keyword set is the union of each adapter's
+    ``definition_keywords`` — the source of truth lives in the adapters,
+    not in a hand-maintained list in grep.py."""
+    from ast_outline.adapters import ADAPTERS
+    from ast_outline.adapters.python import PythonAdapter
+    from ast_outline.adapters.csharp import CSharpAdapter
+    from ast_outline.adapters.rust import RustAdapter
+    from ast_outline.grep import _definition_keywords
+
+    # Code adapters declare their own keywords.
+    assert "def" in PythonAdapter.definition_keywords
+    assert "class" in PythonAdapter.definition_keywords
+    assert "record" in CSharpAdapter.definition_keywords
+    assert "fn" in RustAdapter.definition_keywords
+    assert "impl" in RustAdapter.definition_keywords
+
+    union = _definition_keywords()
+    # Every adapter's keywords are reachable through the union.
+    for adapter in ADAPTERS:
+        assert set(getattr(adapter, "definition_keywords", frozenset())) <= union
+
+
+def test_cli_strip_keyword_class_equals_kind_def(tmp_path: Path) -> None:
+    """``grep "class X"`` (literal) returns the same matches as
+    ``grep "X" --kind def`` and explains the strip in a ``# note:``."""
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "class MailSpec:\n"
+        "    pass\n"
+        "\n"
+        "def use():\n"
+        "    m = MailSpec()\n"
+    )
+    stripped = _run_cli("grep", "class MailSpec", str(src))
+    baseline = _run_cli("grep", "MailSpec", str(src), "--kind", "def")
+    # Note explains the strip and the auto-def narrow.
+    assert "# note: searched 'MailSpec' as a definition (stripped leading 'class')" in stripped
+    # The actual result rows (lines that aren't notes/hints) are identical.
+    def _rows(out: str) -> list[str]:
+        return [ln for ln in out.splitlines() if not ln.startswith("#")]
+    assert _rows(stripped) == _rows(baseline)
+
+
+@pytest.mark.parametrize(
+    "keyword,lang_file,decl",
+    [
+        ("enum", "e.cs", "public enum Color { Red }"),
+        ("struct", "s.rs", "struct Point { x: i32 }"),
+        ("def", "d.py", "def handler():\n    pass"),
+        ("interface", "i.ts", "interface Shape { area(): number }"),
+        ("func", "f.go", "func Compute() int { return 1 }"),
+    ],
+)
+def test_cli_strip_keyword_across_languages(
+    tmp_path: Path, keyword: str, lang_file: str, decl: str
+) -> None:
+    """Each language's own definition keyword is stripped and the symbol
+    is found as a definition."""
+    src = tmp_path / lang_file
+    # Pull the declared name out of the snippet (first identifier after
+    # the keyword) so the test stays in lockstep with the snippet.
+    name = decl.split(keyword, 1)[1].split()[0].rstrip("(){:")
+    src.write_text(decl + "\n")
+    out = _run_cli("grep", f"{keyword} {name}", str(src))
+    assert f"stripped leading '{keyword}'" in out
+    assert name in out
+    assert "no matches" not in out
+
+
+def test_cli_strip_keyword_respects_explicit_regex(tmp_path: Path) -> None:
+    """Explicit ``--regex`` disables keyword-stripping — the user means
+    exactly what they typed, so ``class MailSpec`` is searched literally
+    (and matches the declaration line as a ref, not stripped to a def)."""
+    src = tmp_path / "mod.py"
+    src.write_text("class MailSpec:\n    pass\n")
+    out = _run_cli("grep", "--regex", "class MailSpec", str(src))
+    assert "stripped leading" not in out
+    # Literal regex still matches the declaration line.
+    assert "class MailSpec" in out
+
+
+def test_cli_strip_keyword_keeps_explicit_kind(tmp_path: Path) -> None:
+    """When the user gave an explicit ``--kind``, the keyword is still
+    stripped but the kind is NOT auto-narrowed to def — their filter
+    wins, and the note drops the "as a definition" phrasing."""
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "class MailSpec:\n"
+        "    pass\n"
+        "\n"
+        "def use():\n"
+        "    m = MailSpec()\n"
+    )
+    out = _run_cli("grep", "class MailSpec", str(src), "--kind", "call")
+    assert "# note: searched 'MailSpec' (stripped leading 'class')" in out
+    assert "as a definition" not in out
+    # --kind call kept → the instantiation is found.
+    assert "MailSpec()" in out
+
+
+def test_cli_strip_keyword_not_triggered_on_normal_queries(tmp_path: Path) -> None:
+    """Negative: ordinary symbol queries must NOT be stripped — single
+    tokens, keyword-only, qualified names, and a leading non-keyword
+    word all pass through untouched."""
+    src = tmp_path / "mod.py"
+    src.write_text("class className:\n    pass\n")
+    for pat in ("className", "class", "MyClass", "save"):
+        out = _run_cli("grep", pat, str(src))
+        assert "stripped leading" not in out, f"{pat!r} must not be stripped"
+
+
+# --- (b) kind-mismatch + did-you-mean interaction -------------------------
+
+
+def test_cli_did_you_mean_suppressed_when_kind_hint_fires(tmp_path: Path) -> None:
+    """The kind-exclusion hint (the symbol IS present, just a different
+    kind) and the did-you-mean hint (no such symbol) are mutually
+    exclusive — when the pattern matched under another kind there is no
+    typo to suggest, so did-you-mean stays silent."""
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "def save_item():\n"
+        "    pass\n"
+        "\n"
+        "def caller():\n"
+        "    save_item()\n"
+    )
+    out = _run_cli("grep", "save_item", str(src), "--kind", "ref")
+    assert "# hint: --kind ref excluded" in out
+    assert "did you mean" not in out
+
+
+# --- (c) did-you-mean by edit distance ------------------------------------
+
+
+def test_suggest_similar_symbols_unit(tmp_path: Path) -> None:
+    """The pure helper returns close declaration names with kind+count,
+    rejects blind guesses, short patterns, and non-identifiers."""
+    src = tmp_path / "store.py"
+    src.write_text(
+        "class MissSortPile:\n"
+        "    pass\n"
+        "\n"
+        "class MissSortPileGroup:\n"
+        "    pass\n"
+    )
+    hits = suggest_similar_symbols("MissSortPiles", [src])
+    names = [name for name, _kind, _count in hits]
+    assert "MissSortPile" in names
+    # Blind guess sharing no structure → nothing.
+    assert suggest_similar_symbols("ZZZUnrelated", [src]) == []
+    # Too short to be meaningful.
+    assert suggest_similar_symbols("Mi", [src]) == []
+    # Not a bare identifier.
+    assert suggest_similar_symbols("Miss.Sort", [src]) == []
+    # The pattern itself is never suggested.
+    assert all(name != "MissSortPile" for name, _, _ in
+               suggest_similar_symbols("MissSortPile", [src]))
+
+
+def test_cli_did_you_mean_plural_singular(tmp_path: Path) -> None:
+    """The dominant blind-retry case: a plural/singular mismatch. The
+    closest real symbol is surfaced so the next call is the right one."""
+    src = tmp_path / "store.py"
+    src.write_text(
+        "class MissSortPile:\n"
+        "    pass\n"
+        "\n"
+        "class MissSortPileGroup:\n"
+        "    pass\n"
+    )
+    out = _run_cli("grep", "MissSortPiles", str(src))
+    assert "# note: no matches for 'MissSortPiles'" in out
+    assert "# hint: did you mean:" in out
+    assert "MissSortPile (class)" in out
+
+
+def test_cli_did_you_mean_typo(tmp_path: Path) -> None:
+    """A single-character typo on a real symbol is recovered."""
+    src = tmp_path / "mod.py"
+    src.write_text("def calculate_total():\n    pass\n")
+    out = _run_cli("grep", "calculate_totl", str(src))
+    assert "# hint: did you mean:" in out
+    assert "calculate_total" in out
+
+
+def test_cli_did_you_mean_blind_guess_gives_no_suggestion(tmp_path: Path) -> None:
+    """Negative: a name sharing no structure with any real symbol must
+    NOT produce a suggestion — difflib's cutoff rejects it, and the
+    output is the bare ``# note:`` exactly as before."""
+    src = tmp_path / "mod.py"
+    src.write_text("def calculate_total():\n    pass\n")
+    out = _run_cli("grep", "frobnicate_widget", str(src))
+    assert "# note: no matches" in out
+    assert "did you mean" not in out
+
+
+def test_cli_did_you_mean_skipped_for_regex(tmp_path: Path) -> None:
+    """Negative: with ``--regex`` the pattern is not a plain identifier
+    the agent typed by hand, so no did-you-mean is offered."""
+    src = tmp_path / "mod.py"
+    src.write_text("def calculate_total():\n    pass\n")
+    out = _run_cli("grep", "--regex", "calculate_totl", str(src))
+    assert "did you mean" not in out
+
+
+def test_cli_did_you_mean_composes_with_keyword_strip(tmp_path: Path) -> None:
+    """``grep "class MissSortPiles"`` strips the keyword, finds nothing
+    for the (plural) identifier, then suggests the real singular class —
+    both heuristics fire on one call."""
+    src = tmp_path / "store.py"
+    src.write_text("class MissSortPile:\n    pass\n")
+    out = _run_cli("grep", "class MissSortPiles", str(src))
+    assert "stripped leading 'class'" in out
+    assert "# hint: did you mean:" in out
+    assert "MissSortPile" in out
+
+
+def test_cli_did_you_mean_reports_count_for_repeated_name(tmp_path: Path) -> None:
+    """When several declarations share a near-miss name, the count is
+    surfaced so the agent knows the symbol's footprint."""
+    src1 = tmp_path / "a.py"
+    src1.write_text("def handle():\n    pass\n")
+    src2 = tmp_path / "b.py"
+    src2.write_text("def handle():\n    pass\n")
+    out = _run_cli("grep", "handlee", str(tmp_path))
+    assert "# hint: did you mean:" in out
+    # Two declarations named ``handle`` → count rendered.
+    assert "handle (" in out and "×2" in out
+
+
+# --- coverage gap-fillers: multi-pattern, JSON, adapter contract ----------
+
+
+def test_cli_strip_keyword_not_triggered_with_multiple_patterns(
+    tmp_path: Path,
+) -> None:
+    """Negative: keyword-stripping only handles the single-pattern form —
+    with multiple ``-e`` patterns an auto narrow-to-def would be
+    ambiguous, so the leading keyword is left intact."""
+    src = tmp_path / "mod.py"
+    src.write_text("class MailSpec:\n    pass\n")
+    out = _run_cli("grep", "class MailSpec", "-e", "other", str(src))
+    assert "stripped leading" not in out
+
+
+def test_cli_strip_keyword_note_rides_json_envelope(tmp_path: Path) -> None:
+    """The keyword-strip ``# note:`` documents a query rewrite, so unlike
+    the interactive hints it must also ride the JSON ``notes`` array
+    (both output modes searched the same identifier)."""
+    import json
+    src = tmp_path / "mod.py"
+    src.write_text("class MailSpec:\n    pass\n")
+    out = _run_cli("grep", "class MailSpec", str(src), "--json")
+    data = json.loads(out)
+    assert any("stripped leading 'class'" in n for n in data["notes"])
+    assert any("as a definition" in n for n in data["notes"])
+
+
+def test_cli_did_you_mean_absent_in_json_mode(tmp_path: Path) -> None:
+    """did-you-mean is an interactive text-mode nudge — the JSON
+    empty-result envelope returns early, so the suggestion must never
+    leak into JSON (where a consumer would not expect prose hints)."""
+    import json
+    src = tmp_path / "store.py"
+    src.write_text("class MissSortPile:\n    pass\n")
+    out = _run_cli("grep", "MissSortPiles", str(src), "--json")
+    data = json.loads(out)
+    assert data["files"] == []
+    assert data["notes"] == []
+    assert "did you mean" not in out
+
+
+def test_every_adapter_declares_definition_keywords() -> None:
+    """Contract guard: every registered adapter exposes a
+    ``definition_keywords`` frozenset (code adapters non-empty, data /
+    markup adapters empty). Catches a new adapter that forgets it before
+    the keyword-strip union silently skips that language."""
+    from ast_outline.adapters import ADAPTERS
+    for adapter in ADAPTERS:
+        kws = adapter.definition_keywords
+        assert isinstance(kws, frozenset), (
+            f"{type(adapter).__name__}.definition_keywords must be a frozenset"
+        )
+        assert all(isinstance(k, str) and k for k in kws)
+
+
+def test_cli_did_you_mean_path_returns_exit_zero(tmp_path: Path) -> None:
+    """The did-you-mean path does extra work (it parses the scope to
+    gather candidate names) — that work must never break the CLI exit-0
+    invariant. Assert the return code directly, not just stdout."""
+    from ast_outline.cli import main
+    import io
+    import contextlib
+    src = tmp_path / "store.py"
+    src.write_text("class MissSortPile:\n    pass\n")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(["grep", "MissSortPiles", str(tmp_path)])
+    assert rc == 0
+    assert "did you mean" in buf.getvalue()

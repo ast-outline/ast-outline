@@ -67,6 +67,8 @@ _PARSER = Parser(_LANGUAGE)
 class CssAdapter:
     language_name = "css"
     extensions = {".css"}
+    # No leading declaration keyword — rules are selector-based.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -85,6 +85,9 @@ _PARSER = Parser(_LANGUAGE)
 class KotlinAdapter:
     language_name = "kotlin"
     extensions = {".kt", ".kts"}
+    definition_keywords = frozenset({
+        "class", "interface", "object", "enum", "fun",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

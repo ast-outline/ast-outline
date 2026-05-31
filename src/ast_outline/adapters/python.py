@@ -41,6 +41,7 @@ _PARSER = Parser(_LANGUAGE)
 class PythonAdapter:
     language_name = "python"
     extensions = {".py", ".pyi"}
+    definition_keywords = frozenset({"def", "class"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

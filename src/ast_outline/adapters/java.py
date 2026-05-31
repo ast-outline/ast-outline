@@ -87,6 +87,7 @@ _MEMBER_NODE_KIND = {
 class JavaAdapter:
     language_name = "java"
     extensions = {".java"}
+    definition_keywords = frozenset({"class", "interface", "enum", "record"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

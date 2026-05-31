@@ -100,6 +100,9 @@ _PARSER = Parser(_LANGUAGE)
 class ScalaAdapter:
     language_name = "scala"
     extensions = {".scala", ".sc"}
+    definition_keywords = frozenset({
+        "class", "trait", "object", "def", "type",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -167,6 +167,9 @@ class PhpAdapter:
     # `.phps`  — PHP source-display files (server renders highlighted)
     # `.php8`  — occasionally used to flag PHP 8-only sources
     extensions = {".php", ".phtml", ".phps", ".php8"}
+    definition_keywords = frozenset({
+        "class", "interface", "trait", "function", "enum",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

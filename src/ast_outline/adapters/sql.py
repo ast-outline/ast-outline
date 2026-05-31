@@ -135,6 +135,10 @@ _COMMENT_TYPES = {"comment", "marginalia"}
 class SqlAdapter:
     language_name = "sql"
     extensions = {".sql"}
+    # SQL declarations lead with multi-word DDL (`CREATE TABLE foo`), not
+    # a single keyword + identifier, so the keyword-strip shape doesn't
+    # apply.
+    definition_keywords = frozenset()
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

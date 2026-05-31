@@ -7,6 +7,44 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.2.0] — 2026-05-31
+
+### Added
+
+- **`grep` recovers from empty results instead of leaving an agent to
+  guess.** An empty `grep` is the most expensive miss for an LLM
+  agent — the usual next move is a blind retry (reword the pattern,
+  drop a flag) or abandoning the tool for raw `rg` / file reads. Two
+  heuristics make the first call land, or hand back enough to make the
+  second call correct rather than another guess. Both ride the
+  established exit-0 / `# note:` / `# hint:` convention, are disabled
+  under explicit `--regex`, and compose with the existing
+  `--kind`-mismatch hint (one follow-up line per empty result keeps the
+  output scannable).
+
+  - **Leading definition-keyword stripping.** A literal single pattern
+    of the shape `<keyword> Identifier` (`enum ItemSoundFamily`,
+    `class MailSpec`, `def handler`, `fn parse`, `type Config`, …) has
+    the keyword stripped, the identifier searched, and — when no
+    explicit `--kind` was given — the search auto-narrowed to `def`.
+    Agents habitually paste the source keyword in front of a symbol; as
+    a literal substring the match landed on the keyword (not the name),
+    classified as a `ref`, and a `--kind def` narrow then dropped it —
+    a silent "no matches". `ast-outline grep "enum Foo"` now behaves
+    like `ast-outline grep Foo --kind def`, with a `# note:` documenting
+    the strip. The recognized keywords are owned per-language by each
+    adapter (a new `definition_keywords` attribute) and unioned at
+    search time, so a new language adapter extends the behavior for
+    free.
+
+  - **Did-you-mean by edit distance.** On a true no-match for a plain
+    identifier, `grep` gathers the declaration names in scope and
+    surfaces the closest real symbol(s) via the standard library's
+    `difflib` (no new dependency) — catching plural/singular slips and
+    typos (`MissSortPiles` → `MissSortPile`). Names sharing no structure
+    with any real symbol produce no suggestion (no false leads), and the
+    lookup is bounded so a no-match never turns into a stall.
+
 ## [1.1.0] — 2026-05-25
 
 ### Fixed
