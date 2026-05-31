@@ -357,6 +357,43 @@ def show_json(
     return _emit(_envelope("show", payload))
 
 
+def show_dir_json(
+    directory: str,
+    query_results: list[tuple[str, list[tuple[Path, SymbolMatch]]]],
+    *,
+    view: str = "full",
+    no_doc: bool = False,
+    notes: list[str] | None = None,
+) -> str:
+    """Serialize directory-scoped `show` output.
+
+    Mirrors :func:`show_json`, but for the case where `show` was pointed
+    at a directory and located the symbol itself: the matches for one
+    query may come from several files, so each match carries its own
+    `file`, and the top-level locator is `directory` instead of `file`.
+    A not-found symbol is an entry with an empty `matches` list (the
+    `notes` field carries the did-you-mean suggestion, if any).
+    """
+    payload = {
+        "directory": directory,
+        "notes": list(notes or []),
+        "results": [
+            {
+                "query": query,
+                "matches": [
+                    {
+                        **symbol_match_to_dict(m, view=view, no_doc=no_doc),
+                        "file": str(fpath),
+                    }
+                    for (fpath, m) in matches
+                ],
+            }
+            for (query, matches) in query_results
+        ],
+    }
+    return _emit(_envelope("show", payload))
+
+
 def error_json(
     command: str | None, notes: list[str], hint: str | None = None
 ) -> str:

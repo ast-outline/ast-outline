@@ -7,6 +7,36 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.0] — 2026-05-31
+
+### Added
+
+- **`show <dir> <symbol>` finds the definition itself — one call instead
+  of two.** Pointed at a directory (rather than a file), `show` now
+  locates the symbol's definition(s) under it and prints the body
+  directly. This collapses the agent's most common `show` failure loop —
+  `show <dir> <symbol>` → `# note: not a file` → `grep <symbol> <dir>
+  --kind def` → `show <file> <symbol>` — into a single call. The
+  directory walk and `def` classification reuse the existing `grep`
+  machinery (the same file collection that honors `.gitignore`/`.ignore`),
+  and the authoritative `find_symbols` resolver runs only on the
+  candidate files, so a substring near-miss like `MailSpecHelper` is
+  collected cheaply then dropped precisely.
+
+  - **One definition** → its body, plus
+    `# note: found 'MailSpec' (class) in <path>` naming where it lives.
+  - **Several definitions** (same name across files) → all bodies
+    printed (a directory `show` is still a `show`), preceded by
+    `# note: N definitions of 'MailSpec' across M files — all shown below`;
+    each body header carries its own path.
+  - **No match** → `# note: symbol not found`, with a did-you-mean hint
+    (reusing `grep`'s edit-distance suggester) when a close name exists.
+  - All `show` flags (`--signature`, `--no-doc`, `--view`) and `--json`
+    apply to the located file(s). In `--json` mode the envelope uses a
+    `directory` locator and tags every match with its own `file`.
+
+  File-target `show <file> <symbol>` is unchanged.
+
 ## [1.2.0] — 2026-05-31
 
 ### Added

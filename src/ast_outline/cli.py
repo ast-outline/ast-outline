@@ -231,7 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     _add_outline_args(p_outline)
 
     p_show = sub.add_parser("show", help="Print source of one or more symbols")
-    p_show.add_argument("file", help="Source file")
+    p_show.add_argument(
+        "file",
+        help="Source file, or a directory to search for the symbol's "
+             "definition(s) and show the body in one call",
+    )
     p_show.add_argument("symbols", nargs="+", help="Symbol name(s), e.g. `TakeDamage Heal`")
     p_show.add_argument("--no-doc", action="store_true", help="Strip leading doc comments from output")
     # --view dials output depth: `full` is the existing body-extraction
@@ -260,6 +264,27 @@ def main(argv: list[str] | None = None) -> int:
         action="store_const",
         const="full",
         help="Alias for `--view full` — print full source body (default)",
+    )
+    # `--no-ignore` / `--exclude` only bite when the target is a directory
+    # (a single-file `show` reads exactly the file given). They mirror the
+    # `grep` / `digest` flags so the directory search can reach an ignored
+    # folder or prune extra paths.
+    p_show.add_argument(
+        "--no-ignore",
+        action="store_true",
+        help="Directory target only: disable .gitignore / .ignore / "
+             "hardcoded defaults when searching for the symbol",
+    )
+    p_show.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help=(
+            "Directory target only: exclude paths matching gitwildmatch "
+            "(.gitignore-syntax) GLOB; repeatable. Anchored at the project "
+            "root. Supports `!` negation. Applies even with --no-ignore."
+        ),
     )
     p_show.add_argument(
         "--json",
@@ -770,9 +795,180 @@ def _cmd_outline(args) -> int:
     return 0
 
 
+def _print_show_body(args, path, m) -> None:
+    """Print one resolved symbol: header + breadcrumb + body (or signature).
+
+    Shared by the file-mode and directory-mode `show` paths so the body
+    rendering — line-range header, enclosing-scope breadcrumb, and the
+    `--view` / `--no-doc` toggles — stays identical regardless of how the
+    symbol was located. Emits no leading blank line; the caller owns the
+    inter-body spacing.
+    """
+    print(f"# {path}:{m.start_line}-{m.end_line}  {m.qualified_name}  ({m.kind})")
+    # Breadcrumb: show the enclosing namespace/class chain so the agent
+    # knows what the extracted body is nested inside — without having
+    # to call `outline` separately. Skipped for top-level symbols.
+    if m.ancestor_signatures:
+        print(f"# in: {' → '.join(m.ancestor_signatures)}")
+    if args.view == "signature":
+        # Header-only view: docs + attrs + signature, no body. The agent
+        # uses this when it knows the symbol name (post-digest) and wants
+        # the contract — not the implementation. Falls back to full
+        # source if the back-reference isn't populated, so the caller
+        # never sees an empty body.
+        rendered = render_signature_view(m)
+        body = rendered if rendered else m.source
+    else:
+        body = m.source
+    if args.no_doc:
+        body = strip_leading_doc(body)
+    print(body)
+
+
+def _symbol_search_name(symbol: str) -> str:
+    """The bare name token to pre-filter a directory by.
+
+    `find_symbols` resolves a dotted / bracketed query by *suffix* — so a
+    definition's own name token is the query's last path component
+    (`Player.TakeDamage` → `TakeDamage`, `containers[0].image` →
+    `image`). We pre-filter the directory with a `grep <name> --kind def`
+    on that token, then let `find_symbols` re-apply the full path on the
+    candidate files. Bare names pass through unchanged.
+    """
+    tail = re.split(r"[.\[]", symbol)[-1].rstrip("]")
+    return tail or symbol
+
+
+def _resolve_symbols_in_dir(args, directory, *, no_ignore, exclude):
+    """Locate each requested symbol's definition(s) under ``directory``.
+
+    Reuses the grep file-walk + ``def`` classifier as a cheap pre-filter
+    (it reads every file but only parses the few with a positional hit),
+    then runs the authoritative ``find_symbols`` resolver on just those
+    candidate files. Returns a list of ``(symbol, found, suggestions)``
+    in input order, where ``found`` is a list of ``(file_path,
+    SymbolMatch)`` and ``suggestions`` is the did-you-mean pool (only
+    populated when ``found`` is empty).
+    """
+    from .grep import grep, suggest_similar_symbols, KIND_DEF
+
+    resolved = []
+    for symbol in args.symbols:
+        name = _symbol_search_name(symbol)
+        # `grep <name> DIR --kind def` — the exact pattern an agent would
+        # otherwise type as its second call. Literal (no word_match): we
+        # mirror that command's default, and `find_symbols` below exact-
+        # matches the name token, so a substring candidate like
+        # `MailSpecHelper` is collected cheaply then dropped precisely.
+        file_results, _ignored, _excluded = grep(
+            [name], [directory],
+            kind_filter={KIND_DEF},
+            no_ignore=no_ignore,
+            exclude=exclude,
+        )
+        found = []
+        for fr in file_results:
+            if not fr.matches:
+                continue
+            adapter = get_adapter_for(fr.path)
+            if adapter is None:
+                continue
+            try:
+                parsed = adapter.parse(fr.path)
+            except Exception:
+                continue
+            for m in find_symbols(parsed, symbol):
+                found.append((fr.path, m))
+        suggestions = []
+        if not found:
+            suggestions = suggest_similar_symbols(
+                symbol, [directory], no_ignore=no_ignore, exclude=exclude
+            )
+        resolved.append((symbol, found, suggestions))
+    return resolved
+
+
+def _render_did_you_mean(suggestions) -> str:
+    """Format a did-you-mean pool the same way `grep` does."""
+    return ", ".join(
+        f"{n} ({k})" if c == 1 else f"{n} ({k} ×{c})"
+        for n, k, c in suggestions
+    )
+
+
+def _show_in_dir(args, directory, json_mode: bool) -> int:
+    """Resolve symbols by searching a directory, then show their bodies.
+
+    Collapses the agent's recurring two-call pattern — `grep <symbol> DIR
+    --kind def` to find the file, then `show <file> <symbol>` to read the
+    body — into a single `show DIR <symbol>`. A symbol defined in one
+    file prints its body; a symbol defined in several files prints them
+    all (a directory `show` is still a `show` — it shows what it found).
+    """
+    no_ignore = getattr(args, "no_ignore", False)
+    exclude = getattr(args, "exclude", []) or []
+    resolved = _resolve_symbols_in_dir(
+        args, directory, no_ignore=no_ignore, exclude=exclude
+    )
+
+    if json_mode:
+        notes = []
+        for symbol, found, suggestions in resolved:
+            if not found:
+                notes.append(f"symbol not found: {symbol} in {directory}")
+                if suggestions:
+                    notes.append(
+                        f"did you mean (for {symbol}): "
+                        f"{_render_did_you_mean(suggestions)}?"
+                    )
+        print(json_output.show_dir_json(
+            str(directory),
+            [(symbol, found) for symbol, found, _ in resolved],
+            view=args.view, no_doc=args.no_doc, notes=notes,
+        ))
+        return 0
+
+    first_block = True
+    for symbol, found, suggestions in resolved:
+        if not first_block:
+            print()
+        first_block = False
+        if not found:
+            print(f"# note: symbol not found: {symbol} in {directory}")
+            if suggestions:
+                print(f"# hint: did you mean: {_render_did_you_mean(suggestions)}?")
+            continue
+        # Announce where the definition(s) live. A single hit names the
+        # file (the value the agent's second `grep` call existed to get);
+        # several hits state the count — each body header below already
+        # carries its own path, so no redundant path list here.
+        files = []
+        for fpath, _m in found:
+            if fpath not in files:
+                files.append(fpath)
+        if len(found) == 1:
+            fpath, m = found[0]
+            print(f"# note: found '{symbol}' ({m.kind}) in {fpath}")
+        else:
+            print(
+                f"# note: {len(found)} definitions of '{symbol}' across "
+                f"{len(files)} file{'s' if len(files) != 1 else ''} "
+                "— all shown below"
+            )
+        for i, (fpath, m) in enumerate(found):
+            if i > 0:
+                print()
+            _print_show_body(args, fpath, m)
+    return 0
+
+
 def _cmd_show(args) -> int:
     json_mode = getattr(args, "json", False)
     path = Path(args.file)
+    # Directory target → locate the symbol's definition(s) ourselves and
+    # show the body, instead of the old "path is not a file" dead end.
+    if path.is_dir():
+        return _show_in_dir(args, path, json_mode)
     if not path.is_file():
         return _emit_error(json_mode, "show", [f"file not found: {path}"])
     adapter = get_adapter_for(path)
@@ -817,34 +1013,7 @@ def _cmd_show(args) -> int:
             if not first:
                 print()
             first = False
-            print(f"# {path}:{m.start_line}-{m.end_line}  {m.qualified_name}  ({m.kind})")
-            # Breadcrumb: show the enclosing namespace/class chain so the agent
-            # knows what the extracted body is nested inside — without having
-            # to call `outline` separately. Skipped for top-level symbols.
-            if m.ancestor_signatures:
-                chain = " → ".join(m.ancestor_signatures)
-                print(f"# in: {chain}")
-            if args.view == "signature":
-                # Header-only view: docs + attrs + signature, no body. The
-                # agent uses this when it knows the symbol name (post-digest)
-                # and wants the contract — not the implementation. Falls back
-                # to full source if the back-reference isn't populated, so
-                # the caller never sees an empty body.
-                sig = render_signature_view(m)
-                if sig:
-                    if args.no_doc:
-                        sig = strip_leading_doc(sig)
-                    print(sig)
-                else:
-                    src = m.source
-                    if args.no_doc:
-                        src = strip_leading_doc(src)
-                    print(src)
-            else:
-                src = m.source
-                if args.no_doc:
-                    src = strip_leading_doc(src)
-                print(src)
+            _print_show_body(args, path, m)
     return 0
 
 
@@ -1260,7 +1429,7 @@ SUPPORTED LANGUAGES
 
 COMMANDS
     ast-outline outline <paths...>          Print outline of files or dirs
-    ast-outline show <file> <symbols...>    Print source of one or more symbols
+    ast-outline show <file|dir> <symbols...> Print source of symbols (dir → find + show)
     ast-outline digest <paths...>           Compact public-API map of a dir
     ast-outline grep <pattern> <paths...>   Find pattern with scope+kind annotations
     ast-outline prompt                      Print the canonical agent prompt snippet
@@ -1274,6 +1443,7 @@ QUICK EXAMPLES
     ast-outline Assets/Scripts --no-private --no-fields
     ast-outline show Player.cs TakeDamage Heal
     ast-outline show user_service.py UserService.get_by_id
+    ast-outline show Assets/Scripts/App/Mail MailSpec   # find + show in a dir
     ast-outline digest Assets/Scripts
     ast-outline digest scripts/
 
@@ -1298,7 +1468,7 @@ TIPS FOR LLM AGENTS
     1. Start broad → narrow:
          ast-outline digest <dir>        # architecture map of the module
          ast-outline <file>              # one file in detail
-         ast-outline show <file> <Name>  # body of a specific symbol
+         ast-outline show <file|dir> <Name>  # body of a symbol (dir → finds it)
     2. Symbol matching is suffix-based: `Foo.Bar` matches `*.Foo.Bar`.
     3. Use `--no-private --no-fields` for a pure public-API view.
 """
@@ -1346,13 +1516,26 @@ GUIDE_SHOW = """\
 ast-outline show — extract source of one or more symbols
 
 USAGE
-    ast-outline show <file> <symbols...> [--no-doc] [--signature | --full]
+    ast-outline show <file|dir> <symbols...> [--no-doc] [--signature | --full]
 
 SYMBOL SYNTAX
     Short name:      TakeDamage        get_by_id
     Class-scoped:    PlayerController.TakeDamage      UserService.get_by_id
     Fully-qualified: Game.Player.PlayerController.TakeDamage
     Matching is suffix-based — short name works unless ambiguous.
+
+DIRECTORY TARGET — find + show in one call
+    Point `show` at a directory and it locates the symbol's definition(s)
+    itself — no separate `grep <symbol> DIR --kind def` first:
+        ast-outline show Assets/Scripts/App/Mail MailSpec
+    - Defined in one file → prints the body, with
+      `# note: found 'MailSpec' (class) in <path>`.
+    - Defined in several files → prints ALL bodies (a `show` shows what it
+      found), with `# note: N definitions of 'MailSpec' across M files`.
+    - Not found → `# note: symbol not found` (+ a did-you-mean hint when
+      a close name exists). Always exits 0.
+    Honors .gitignore/.ignore like `grep`/`digest`. All flags below apply
+    to the located file(s).
 
 MARKDOWN HEADINGS — substring matching
     For .md files, headings match by case-insensitive substring of every

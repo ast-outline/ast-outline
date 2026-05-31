@@ -169,6 +169,25 @@ def test_show_payload_shape(python_dir, capsys):
         assert key in m
 
 
+def test_show_dir_payload_shape(python_dir, capsys):
+    """`show <dir> <symbol> --json` uses a `directory` locator (not
+    `file`) and tags each match with its own `file`, since matches for
+    one query can come from several files."""
+    obj = _run_json(["show", str(python_dir), "BaseEntity", "--json"], capsys)
+    assert obj["command"] == "show"
+    assert "directory" in obj and "file" not in obj
+    assert isinstance(obj["notes"], list)
+    assert len(obj["results"]) == 1
+    entry = obj["results"][0]
+    assert entry["query"] == "BaseEntity"
+    assert entry["matches"], "BaseEntity should be found under the dir"
+    m = entry["matches"][0]
+    for key in ("qualified_name", "kind", "start_line", "end_line",
+                "ancestor_signatures", "signature", "source", "file"):
+        assert key in m
+    assert m["file"].endswith(".py")
+
+
 # --- Declaration serialization -------------------------------------------
 
 

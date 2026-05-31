@@ -350,6 +350,257 @@ def test_show_signature_view_strips_docs_with_no_doc(csharp_dir, capsys):
     assert "public void TakeDamage(int amount)" in out
 
 
+# --- show <dir> <symbol> -------------------------------------------------
+#
+# When `show` is pointed at a directory it locates the symbol's
+# definition(s) itself (the `grep <symbol> DIR --kind def` an agent would
+# otherwise run as a second call) and shows the body in one call.
+
+
+def _write(dir_path, name, text):
+    p = dir_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_show_dir_single_definition_prints_body_and_note(tmp_path, capsys):
+    """A symbol defined in exactly one file under the dir → its body, plus
+    a `# note: found ... in <file>` naming where it was located."""
+    _write(tmp_path, "noise.cs", "namespace N { class Other { } }\n")
+    _write(
+        tmp_path,
+        "mail.cs",
+        "namespace N {\n"
+        "    public class MailSpec {\n"
+        "        public int Id;\n"
+        "    }\n"
+        "}\n",
+    )
+    rc = main(["show", str(tmp_path), "MailSpec"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    out = captured.out
+    # Body is present
+    assert "public class MailSpec" in out
+    assert "public int Id;" in out
+    # Note names the file the definition was found in
+    assert "# note: found 'MailSpec'" in out
+    assert "mail.cs" in out
+    # The unrelated file's class is not shown
+    assert "class Other" not in out
+
+
+def test_show_dir_multiple_definitions_shows_all_bodies(tmp_path, capsys):
+    """A symbol defined in several files → all bodies printed (a directory
+    `show` is still a `show`), with a count note. No truncation."""
+    _write(
+        tmp_path,
+        "a.cs",
+        "namespace A { public class Widget { int A; } }\n",
+    )
+    _write(
+        tmp_path,
+        "b.cs",
+        "namespace B { public class Widget { int B; } }\n",
+    )
+    rc = main(["show", str(tmp_path), "Widget"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    out = captured.out
+    # Count note mentions both definitions
+    assert "# note: 2 definitions of 'Widget'" in out
+    assert "2 files" in out
+    # Both bodies present (distinguished by their distinct fields)
+    assert "int A;" in out
+    assert "int B;" in out
+    # Each body header carries its own file path
+    assert "a.cs" in out
+    assert "b.cs" in out
+
+
+def test_show_dir_symbol_not_found_returns_zero_with_note(tmp_path, capsys):
+    """No definition under the dir → exit 0 + `# note:` (LLM-friendly)."""
+    _write(tmp_path, "x.cs", "namespace N { class Present { } }\n")
+    rc = main(["show", str(tmp_path), "Absent"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "# note:" in captured.out
+    assert "not found" in captured.out.lower()
+    assert "Absent" in captured.out
+
+
+def test_show_dir_not_found_suggests_similar(tmp_path, capsys):
+    """A near-miss name → did-you-mean hint, reusing grep's suggester."""
+    _write(
+        tmp_path,
+        "mail.cs",
+        "namespace N { public class MailSpec { } }\n",
+    )
+    rc = main(["show", str(tmp_path), "MailSpecc"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "# hint: did you mean:" in captured.out
+    assert "MailSpec" in captured.out
+
+
+def test_show_dir_substring_collision_does_not_leak(tmp_path, capsys):
+    """`MailSpec` must not resolve to a `MailSpecHelper` definition — the
+    grep pre-filter may collect that file (substring), but `find_symbols`
+    exact-matches the name token and drops it."""
+    _write(
+        tmp_path,
+        "helper.cs",
+        "namespace N { public class MailSpecHelper { int H; } }\n",
+    )
+    rc = main(["show", str(tmp_path), "MailSpec"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    # No real `MailSpec`, only `MailSpecHelper` → not found, body not leaked
+    assert "not found" in captured.out.lower()
+    assert "int H;" not in captured.out
+
+
+def test_show_dir_respects_signature_flag(tmp_path, capsys):
+    """`--signature` (and other show flags) apply to the dir-located file:
+    contract only, no body."""
+    _write(
+        tmp_path,
+        "svc.cs",
+        "namespace N {\n"
+        "    public class Service {\n"
+        "        public void Run() { DoWork(); }\n"
+        "    }\n"
+        "}\n",
+    )
+    rc = main(["show", str(tmp_path), "Run", "--signature"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "public void Run()" in captured.out
+    # Body statement is omitted in signature view
+    assert "DoWork();" not in captured.out
+
+
+def test_show_dir_respects_no_doc_flag(tmp_path, capsys):
+    """`--no-doc` strips the leading doc block from a dir-located symbol,
+    same as in file mode (the body renderer is shared)."""
+    _write(
+        tmp_path,
+        "doc.cs",
+        "namespace N {\n"
+        "    /// <summary>Important.</summary>\n"
+        "    public class Documented { int X; }\n"
+        "}\n",
+    )
+    rc = main(["show", str(tmp_path), "Documented", "--no-doc"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "public class Documented" in captured.out
+    assert "/// <summary>" not in captured.out
+
+
+def test_show_dir_no_ignore_reaches_ignored_dir(tmp_path, capsys):
+    """By default the directory search honors .gitignore; `--no-ignore`
+    lets it reach a symbol defined in an ignored folder."""
+    (tmp_path / ".gitignore").write_text("hidden/\n", encoding="utf-8")
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    _write(
+        hidden,
+        "buried.cs",
+        "namespace N { public class Buried { int Z; } }\n",
+    )
+    # Default: the symbol's file is ignored → not found.
+    rc = main(["show", str(tmp_path), "Buried"])
+    out_default = capsys.readouterr().out
+    assert rc == 0
+    assert "not found" in out_default.lower()
+    # With --no-ignore: the symbol is located and its body shown.
+    rc = main(["show", str(tmp_path), "Buried", "--no-ignore"])
+    out_no_ignore = capsys.readouterr().out
+    assert rc == 0
+    assert "public class Buried" in out_no_ignore
+    assert "int Z;" in out_no_ignore
+
+
+def test_show_dir_multiple_symbols(tmp_path, capsys):
+    """`show DIR sym1 sym2` resolves each symbol independently."""
+    _write(
+        tmp_path,
+        "two.cs",
+        "namespace N {\n"
+        "    public class Alpha { int A; }\n"
+        "    public class Beta { int B; }\n"
+        "}\n",
+    )
+    rc = main(["show", str(tmp_path), "Alpha", "Beta"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "class Alpha" in captured.out
+    assert "class Beta" in captured.out
+
+
+def test_show_dir_json_is_valid_and_per_match_file(tmp_path, capsys):
+    """`--json` over a directory stays valid JSON, with a `directory`
+    locator and a `file` on each match."""
+    import json
+
+    _write(
+        tmp_path,
+        "a.cs",
+        "namespace A { public class Widget { int A; } }\n",
+    )
+    _write(
+        tmp_path,
+        "b.cs",
+        "namespace B { public class Widget { int B; } }\n",
+    )
+    rc = main(["show", str(tmp_path), "Widget", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    doc = json.loads(captured.out)
+    assert doc["command"] == "show"
+    assert "directory" in doc
+    results = doc["results"]
+    assert len(results) == 1
+    assert results[0]["query"] == "Widget"
+    matches = results[0]["matches"]
+    assert len(matches) == 2
+    # Each match carries its own source file
+    files = {m["file"] for m in matches}
+    assert any(f.endswith("a.cs") for f in files)
+    assert any(f.endswith("b.cs") for f in files)
+
+
+def test_show_dir_json_not_found_carries_did_you_mean(tmp_path, capsys):
+    """A miss in `--json` mode → empty matches + a did-you-mean note."""
+    import json
+
+    _write(
+        tmp_path,
+        "mail.cs",
+        "namespace N { public class MailSpec { } }\n",
+    )
+    rc = main(["show", str(tmp_path), "MailSpecc", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    doc = json.loads(captured.out)
+    assert doc["results"][0]["matches"] == []
+    assert any("did you mean" in n.lower() for n in doc["notes"])
+
+
+def test_show_file_mode_unaffected_by_dir_branch(csharp_dir, capsys):
+    """Negative guard: a plain `show <file> <symbol>` must not enter the
+    directory branch — same body, same `# note:`-free success as before."""
+    rc = main(
+        ["show", str(csharp_dir / "unity_behaviour.cs"), "HeroController.TakeDamage"]
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "public void TakeDamage" in captured.out
+    # The dir-mode "found ... in" note must NOT appear for a file target
+    assert "# note: found" not in captured.out
+
+
 # --- digest --------------------------------------------------------------
 
 
