@@ -376,24 +376,49 @@ def show_dir_json(
     for a glob target) — exactly one of which is non-empty. A not-found
     symbol is an entry with an empty `matches` list (the `notes` field
     carries the did-you-mean suggestion, if any).
+
+    `show` keeps a single-shape contract: it serializes source code *or*
+    a pointer, never both. Each result therefore carries an `ambiguous`
+    flag:
+
+    - ``ambiguous: false`` (zero or one definition) — each match is a
+      full :func:`symbol_match_to_dict` (with `source`), as before.
+    - ``ambiguous: true`` (several definitions) — the matches drop
+      `source` entirely and become candidate locators (`file` / `kind` /
+      `qualified_name` / `start_line` / `end_line`). A consumer reads the
+      list and re-runs `show <file> <symbol>` against one of them; the
+      re-run guidance is also echoed in `notes`.
     """
+    results = []
+    for (query, matches) in query_results:
+        ambiguous = len(matches) > 1
+        if ambiguous:
+            match_dicts = [
+                {
+                    "file": str(fpath),
+                    "qualified_name": m.qualified_name,
+                    "kind": m.kind,
+                    "start_line": m.start_line,
+                    "end_line": m.end_line,
+                }
+                for (fpath, m) in matches
+            ]
+        else:
+            match_dicts = [
+                {
+                    **symbol_match_to_dict(m, view=view, no_doc=no_doc),
+                    "file": str(fpath),
+                }
+                for (fpath, m) in matches
+            ]
+        results.append(
+            {"query": query, "ambiguous": ambiguous, "matches": match_dicts}
+        )
     payload = {
         "directory": directory,
         "glob": glob,
         "notes": list(notes or []),
-        "results": [
-            {
-                "query": query,
-                "matches": [
-                    {
-                        **symbol_match_to_dict(m, view=view, no_doc=no_doc),
-                        "file": str(fpath),
-                    }
-                    for (fpath, m) in matches
-                ],
-            }
-            for (query, matches) in query_results
-        ],
+        "results": results,
     }
     return _emit(_envelope("show", payload))
 

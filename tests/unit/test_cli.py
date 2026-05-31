@@ -390,9 +390,10 @@ def test_show_dir_single_definition_prints_body_and_note(tmp_path, capsys):
     assert "class Other" not in out
 
 
-def test_show_dir_multiple_definitions_shows_all_bodies(tmp_path, capsys):
-    """A symbol defined in several files → all bodies printed (a directory
-    `show` is still a `show`), with a count note. No truncation."""
+def test_show_dir_multiple_definitions_lists_candidates(tmp_path, capsys):
+    """A symbol defined in several files → `show` prints a `# note:` listing
+    the candidate locations and asking the agent to re-run against one — it
+    does NOT dump every body. `show` prints code OR a pointer, never both."""
     _write(
         tmp_path,
         "a.cs",
@@ -407,15 +408,16 @@ def test_show_dir_multiple_definitions_shows_all_bodies(tmp_path, capsys):
     captured = capsys.readouterr()
     assert rc == 0
     out = captured.out
-    # Count note mentions both definitions
+    # The note states the count and asks the agent to re-run against one.
     assert "# note: 2 definitions of 'Widget'" in out
-    assert "2 files" in out
-    # Both bodies present (distinguished by their distinct fields)
-    assert "int A;" in out
-    assert "int B;" in out
-    # Each body header carries its own file path
+    assert "re-run with one of:" in out
+    # Both candidate files are named in the list (with line/kind locators).
     assert "a.cs" in out
     assert "b.cs" in out
+    assert "(class)" in out
+    # No code body is printed — neither definition's distinctive field leaks.
+    assert "int A;" not in out
+    assert "int B;" not in out
 
 
 def test_show_dir_symbol_not_found_returns_zero_with_note(tmp_path, capsys):
@@ -539,9 +541,45 @@ def test_show_dir_multiple_symbols(tmp_path, capsys):
     assert "class Beta" in captured.out
 
 
-def test_show_dir_json_is_valid_and_per_match_file(tmp_path, capsys):
-    """`--json` over a directory stays valid JSON, with a `directory`
-    locator and a `file` on each match."""
+def test_show_dir_mixed_arity_per_symbol_independent(tmp_path, capsys):
+    """`show DIR a b` applies the print-code-or-pointer rule per symbol:
+    a symbol with one definition prints its body, a symbol with several
+    prints the candidate list — both in the same output."""
+    _write(
+        tmp_path,
+        "uniq.cs",
+        "namespace N { public class Solo { int Only; } }\n",
+    )
+    _write(
+        tmp_path,
+        "a.cs",
+        "namespace A { public class Dup { int A; } }\n",
+    )
+    _write(
+        tmp_path,
+        "b.cs",
+        "namespace B { public class Dup { int B; } }\n",
+    )
+    rc = main(["show", str(tmp_path), "Solo", "Dup"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    out = captured.out
+    # `Solo` (N=1) prints its body with a `found … in` note.
+    assert "# note: found 'Solo'" in out
+    assert "public class Solo" in out
+    assert "int Only;" in out
+    # `Dup` (N=2) prints a candidate list, no body.
+    assert "# note: 2 definitions of 'Dup'" in out
+    assert "re-run with one of:" in out
+    assert "int A;" not in out
+    assert "int B;" not in out
+
+
+def test_show_dir_json_ambiguous_lists_candidates_without_bodies(tmp_path, capsys):
+    """`--json` over a directory with N>1 definitions: valid JSON, a
+    `directory` locator, the result flagged `ambiguous`, each candidate
+    tagged with its own `file` — and NO `source` body on any match (the
+    JSON mirrors the text contract: a list, not code)."""
     import json
 
     _write(
@@ -563,12 +601,22 @@ def test_show_dir_json_is_valid_and_per_match_file(tmp_path, capsys):
     results = doc["results"]
     assert len(results) == 1
     assert results[0]["query"] == "Widget"
+    assert results[0]["ambiguous"] is True
     matches = results[0]["matches"]
     assert len(matches) == 2
-    # Each match carries its own source file
+    # Each candidate carries its own file + a line/kind locator.
     files = {m["file"] for m in matches}
     assert any(f.endswith("a.cs") for f in files)
     assert any(f.endswith("b.cs") for f in files)
+    for m in matches:
+        assert {"file", "kind", "start_line", "end_line"} <= set(m)
+        # No code body anywhere — the whole point of the ambiguous branch.
+        assert "source" not in m
+    # The re-run guidance is also echoed in the envelope notes.
+    assert any("re-run with one of" in n for n in doc["notes"])
+    # And the dumped field values must not appear anywhere in the JSON text.
+    assert "int A;" not in captured.out
+    assert "int B;" not in captured.out
 
 
 def test_show_dir_json_not_found_carries_did_you_mean(tmp_path, capsys):

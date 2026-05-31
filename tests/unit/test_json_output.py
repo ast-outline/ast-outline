@@ -183,6 +183,8 @@ def test_show_dir_payload_shape(python_dir, capsys):
     assert len(obj["results"]) == 1
     entry = obj["results"][0]
     assert entry["query"] == "BaseEntity"
+    # One definition → not ambiguous → full match dict with a body.
+    assert entry["ambiguous"] is False
     assert entry["matches"], "BaseEntity should be found under the dir"
     m = entry["matches"][0]
     for key in ("qualified_name", "kind", "start_line", "end_line",
@@ -201,6 +203,7 @@ def test_show_glob_payload_shape(python_dir, capsys):
     assert obj["directory"] == ""
     assert obj["glob"] == pattern
     entry = obj["results"][0]
+    assert entry["ambiguous"] is False
     assert entry["matches"], "BaseEntity should be found via the glob"
     assert entry["matches"][0]["file"].endswith(".py")
 

@@ -916,17 +916,36 @@ def _render_did_you_mean(suggestions) -> str:
     )
 
 
+def _render_show_candidates(found) -> str:
+    """Format the candidate locations for an ambiguous directory/glob `show`.
+
+    ``found`` is the list of ``(file_path, SymbolMatch)`` the resolver
+    returned for one symbol. Each candidate is rendered as
+    ``path:line (kind)`` so the agent can re-run `show <file> <symbol>`
+    against exactly one of them. Used by both the text note and the JSON
+    note, keeping the re-run guidance identical across output modes.
+    """
+    return ", ".join(
+        f"{fpath}:{m.start_line} ({m.kind})" for fpath, m in found
+    )
+
+
 def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool) -> int:
-    """Resolve symbols across several files, then show their bodies.
+    """Resolve symbols across several files, then show or point to them.
 
     Collapses the agent's recurring two-call pattern — `grep <symbol>
     <scope> --kind def` to find the file, then `show <file> <symbol>` to
     read the body — into a single `show <scope> <symbol>`. ``scope`` is a
     directory (`show DIR sym`) or a glob (`show "src/**/*.cs" sym`); the
-    walk is identical, only the displayed locator differs. A symbol
-    defined in one file prints its body; one defined in several files
-    prints them all (a multi-file `show` is still a `show` — it shows
-    what it found).
+    walk is identical, only the displayed locator differs.
+
+    `show` keeps a single-shape contract: when it prints *content* that
+    content is always source code; when it can't (an ambiguous symbol
+    defined in several places), it prints a `# note:` instead — never a
+    mix. So a symbol resolved to one definition prints its body; one
+    resolved to several prints a note listing the candidate locations and
+    asking the agent to re-run against one file (it does not dump every
+    body).
 
     Exactly one of ``directory`` / ``glob_pattern`` is the non-empty
     user-facing locator string; the other is ``""``. Both ride the JSON
@@ -949,6 +968,15 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
                         f"did you mean (for {symbol}): "
                         f"{_render_did_you_mean(suggestions)}?"
                     )
+            elif len(found) > 1:
+                # Ambiguous: the JSON mirrors the text contract — no code
+                # bodies, just the candidate locations. The note repeats the
+                # re-run guidance; the per-result `ambiguous` flag + body-less
+                # matches carry the structured form (see show_dir_json).
+                notes.append(
+                    f"{len(found)} definitions of '{symbol}' "
+                    f"— re-run with one of: {_render_show_candidates(found)}"
+                )
         print(json_output.show_dir_json(
             directory,
             [(symbol, found) for symbol, found, _ in resolved],
@@ -966,27 +994,25 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
             if suggestions:
                 print(f"# hint: did you mean: {_render_did_you_mean(suggestions)}?")
             continue
-        # Announce where the definition(s) live. A single hit names the
-        # file (the value the agent's second `grep` call existed to get);
-        # several hits state the count — each body header below already
-        # carries its own path, so no redundant path list here.
-        files = []
-        for fpath, _m in found:
-            if fpath not in files:
-                files.append(fpath)
         if len(found) == 1:
+            # Unambiguous: print the body, exactly as file-mode would. The
+            # note names the file (the value the agent's second `grep` call
+            # existed to get).
             fpath, m = found[0]
             print(f"# note: found '{symbol}' ({m.kind}) in {fpath}")
-        else:
-            print(
-                f"# note: {len(found)} definitions of '{symbol}' across "
-                f"{len(files)} file{'s' if len(files) != 1 else ''} "
-                "— all shown below"
-            )
-        for i, (fpath, m) in enumerate(found):
-            if i > 0:
-                print()
             _print_show_body(args, fpath, m)
+        else:
+            # Ambiguous — the symbol is defined in several places. `show`
+            # prints source code *or* a pointer note, never a mix: dumping
+            # every body would make the output shape polymorphic (a parser
+            # would have to branch on "is this code or a list?"). So we list
+            # the candidate locations and ask the agent to re-run against
+            # one. This also mirrors how agents disambiguate in practice —
+            # they pick one definition (or a named subset), never read all N.
+            print(
+                f"# note: {len(found)} definitions of '{symbol}' "
+                f"— re-run with one of: {_render_show_candidates(found)}"
+            )
     return 0
 
 
@@ -1580,8 +1606,10 @@ DIRECTORY / GLOB TARGET — find + show in one call
         ast-outline show "Assets/Scripts/**/*.cs" MailSpec   # quote the glob
     - Defined in one file → prints the body, with
       `# note: found 'MailSpec' (class) in <path>`.
-    - Defined in several files → prints ALL bodies (a `show` shows what it
-      found), with `# note: N definitions of 'MailSpec' across M files`.
+    - Defined in several files → prints NO body; lists the candidate
+      locations instead: `# note: N definitions of 'MailSpec' — re-run
+      with one of: a.cs:12 (class), b.cs:5 (class)`. (`show` prints code
+      OR a pointer, never both — re-run against one file to read it.)
     - Not found → `# note: symbol not found` (+ a did-you-mean hint when
       a close name exists). Always exits 0.
     A DIRECTORY search honors .gitignore/.ignore like `grep`/`digest`
@@ -1606,9 +1634,11 @@ MULTIPLE SYMBOLS
 
 BEHAVIOR
     - One match: prints its source (including preceding doc).
-    - Multiple matches for a name (overloads, same name in different classes,
-      or a markdown substring spanning several headings): all are printed,
-      summary on stderr.
+    - Multiple matches in a FILE target (overloads, same name in different
+      classes, or a markdown substring spanning several headings): all are
+      printed, summary on stderr. (For a DIR / GLOB target the rule is the
+      opposite — see DIRECTORY / GLOB TARGET above: N>1 prints no body, just
+      a candidate list. `show` prints code OR a pointer, never both.)
     - Always exits 0 — "not found" is printed as `# note: ...` on stdout
       so the LLM agent's parallel batch isn't aborted by an exit code.
 
@@ -1626,6 +1656,12 @@ FLAGS
     --json          Emit machine-readable JSON instead of text. One entry
                     per requested symbol (not-found = empty match list).
                     --view / --no-doc carry through to each match's source.
+                    DIR / GLOB target: each result carries an `ambiguous`
+                    flag — `ambiguous: true` (N>1) results list body-less
+                    candidate locators (`file` / `kind` / `qualified_name` /
+                    `start_line` / `end_line`, no `source`), and the re-run
+                    guidance is echoed in `notes`; re-run `show <file>
+                    <symbol>` against one to read it.
 """
 
 GUIDE_DIGEST = """\

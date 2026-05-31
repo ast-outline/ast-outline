@@ -7,6 +7,41 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.2] — 2026-05-31
+
+### Changed
+
+- **`show <dir|glob> <symbol>` at N>1 now lists candidates instead of
+  dumping all bodies.** When a symbol resolves to several definitions
+  (across multiple files, or several declarations), `show` no longer
+  prints every body. It prints a single pointer note naming the
+  candidate locations and asks the agent to re-run against one file:
+
+  ```
+  # note: 2 definitions of 'MailSpec' — re-run with one of: a/MailSpec.cs:12 (class), b/MailSpec.cs:5 (class)
+  ```
+
+  This makes `show` single-shape: when it prints **content** that content
+  is always source code; when it can't (an ambiguous symbol), it prints a
+  `# note:` and no code — never a mix. A parser of `show`'s output no
+  longer has to branch on "is this code or a list?". It also matches how
+  agents disambiguate in practice — they pick one definition (or a named
+  subset), they don't read all N at once.
+
+  This **supersedes the v1.3.0/v1.3.1 behavior** where a multi-definition
+  `show` dumped all bodies under a `N definitions … across M files — all
+  shown below` note. The N=1 case (one definition → body + `found … in
+  <file>` note) and the N=0 case (not found + did-you-mean hint) are
+  unchanged, as is the per-file `show <file> <symbol>` mode. No `--all`
+  flag was added.
+
+  In `--json` mode the ambiguous result is flagged `ambiguous: true` and
+  its `matches` become body-less candidate locators (`file` / `kind` /
+  `qualified_name` / `start_line` / `end_line`, **no** `source`); the
+  re-run guidance is echoed in `notes`. The N=1 JSON (full match with
+  `source`) is unchanged, with `ambiguous: false` now present on every
+  result.
+
 ## [1.3.1] — 2026-05-31
 
 ### Added
