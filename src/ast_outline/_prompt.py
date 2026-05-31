@@ -100,6 +100,12 @@ directories, mixed languages OK) — batch instead of looping. Type
 headers in both renderers carry inheritance as `: Base, Trait`, so the
 shape of class hierarchies is visible without a separate query.
 
+The renderers emit a compact skeleton (signatures + line ranges, no
+bodies), so output is usually small — narrow with the tool's own flags
+before piping to `head`. A `grep | head` cut is the costly one: it
+hides matches the header still counts in `(N matches)`, so results look
+complete but aren't — cap per file with `-m N` instead.
+
 Narrow the walk with repeatable `--exclude <glob>`
 (`.gitignore`-syntax, anchored at the project root) on `outline` /
 `digest` / `grep` — e.g. `--exclude tests/ --exclude '*.gen.*'` to

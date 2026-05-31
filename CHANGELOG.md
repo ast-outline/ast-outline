@@ -7,6 +7,23 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.3] — 2026-05-31
+
+### Changed
+
+- **`prompt` snippet now notes that output is already compact and that
+  `grep | head` hides counted matches.** Added one cross-cutting
+  paragraph to `AGENT_PROMPT` (printed by `ast-outline prompt`): the
+  renderers emit a signatures-only skeleton, so output is usually small
+  and worth narrowing with the tool's own flags before piping to
+  `head`; a `grep | head` cut in particular drops matches that the
+  header still counts in `(N matches)` — so results look complete but
+  aren't — with `-m N` as the per-file cap that doesn't lie. Motivated
+  by transcript analysis: a third of real `ast-outline` calls were
+  wrapped in `| head -N` while the built-in limiters went nearly unused,
+  and most `grep | head` cuts silently truncated counted matches. Text
+  only — no behavior change.
+
 ## [1.3.2] — 2026-05-31
 
 ### Changed
