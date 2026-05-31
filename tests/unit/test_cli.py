@@ -588,6 +588,90 @@ def test_show_dir_json_not_found_carries_did_you_mean(tmp_path, capsys):
     assert any("did you mean" in n.lower() for n in doc["notes"])
 
 
+# --- show <glob> <symbol> ------------------------------------------------
+#
+# A quoted glob (the shell didn't expand it) is expanded by `show` itself
+# and the matched files are searched like a directory.
+
+
+def test_show_glob_finds_symbol(tmp_path, capsys):
+    """`show "<dir>/*.cs" <symbol>` expands the glob and shows the body,
+    with the same `# note: found … in <file>`."""
+    _write(tmp_path, "a.cs", "namespace A { class Other { } }\n")
+    _write(
+        tmp_path,
+        "mail.cs",
+        "namespace N { public class MailSpec { int Id; } }\n",
+    )
+    rc = main(["show", str(tmp_path / "*.cs"), "MailSpec"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "public class MailSpec" in captured.out
+    assert "# note: found 'MailSpec'" in captured.out
+    assert "mail.cs" in captured.out
+
+
+def test_show_glob_recursive_double_star(tmp_path, capsys):
+    """A recursive `**` glob reaches nested directories."""
+    nested = tmp_path / "deep" / "deeper"
+    nested.mkdir(parents=True)
+    _write(nested, "buried.cs", "namespace N { public class Buried { int Z; } }\n")
+    rc = main(["show", str(tmp_path / "**" / "*.cs"), "Buried"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "public class Buried" in captured.out
+    assert "int Z;" in captured.out
+
+
+def test_show_glob_no_files_match_returns_zero(tmp_path, capsys):
+    """A glob that matches nothing → `# note: no files match glob`, exit 0."""
+    _write(tmp_path, "a.cs", "namespace A { class A1 { } }\n")
+    rc = main(["show", str(tmp_path / "*.py"), "Anything"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "no files match glob" in captured.out.lower()
+
+
+def test_show_glob_symbol_absent_reports_glob_scope(tmp_path, capsys):
+    """Glob matches files but the symbol is absent → not-found note naming
+    the glob as the scope; exit 0."""
+    _write(tmp_path, "a.cs", "namespace A { public class Present { } }\n")
+    pattern = str(tmp_path / "*.cs")
+    rc = main(["show", pattern, "Absent"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "not found" in captured.out.lower()
+    assert pattern in captured.out
+
+
+def test_show_glob_json_sets_glob_not_directory(tmp_path, capsys):
+    """`--json` over a glob: `directory` empty, `glob` carries the pattern,
+    each match carries its own `file`."""
+    import json
+
+    _write(tmp_path, "mail.cs", "namespace N { public class MailSpec { } }\n")
+    pattern = str(tmp_path / "*.cs")
+    rc = main(["show", pattern, "MailSpec", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    doc = json.loads(captured.out)
+    assert doc["command"] == "show"
+    assert doc["directory"] == ""
+    assert doc["glob"] == pattern
+    matches = doc["results"][0]["matches"]
+    assert matches and matches[0]["file"].endswith("mail.cs")
+
+
+def test_show_missing_plain_path_still_file_not_found(tmp_path, capsys):
+    """A non-glob path that doesn't exist keeps the precise `file not
+    found` note — the glob branch must not swallow it."""
+    rc = main(["show", str(tmp_path / "nope.cs"), "Foo"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "file not found" in captured.out.lower()
+    assert "no files match glob" not in captured.out.lower()
+
+
 def test_show_file_mode_unaffected_by_dir_branch(csharp_dir, capsys):
     """Negative guard: a plain `show <file> <symbol>` must not enter the
     directory branch — same body, same `# note:`-free success as before."""

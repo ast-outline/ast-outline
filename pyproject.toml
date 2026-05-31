@@ -1,6 +1,6 @@
 [project]
 name = "ast-outline"
-version = "1.3.0"
+version = "1.3.1"
 description = "Let AI coding agents pull exactly the code context they need — a repo map, a file outline, a single symbol, or a structural grep — instead of reading whole files. A stateless, tree-sitter-based CLI."
 readme = "README.md"
 requires-python = ">=3.10"

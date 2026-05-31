@@ -172,10 +172,13 @@ def test_show_payload_shape(python_dir, capsys):
 def test_show_dir_payload_shape(python_dir, capsys):
     """`show <dir> <symbol> --json` uses a `directory` locator (not
     `file`) and tags each match with its own `file`, since matches for
-    one query can come from several files."""
+    one query can come from several files. The `glob` field is present
+    but empty for a directory target."""
     obj = _run_json(["show", str(python_dir), "BaseEntity", "--json"], capsys)
     assert obj["command"] == "show"
     assert "directory" in obj and "file" not in obj
+    assert obj["directory"].endswith("python")
+    assert obj["glob"] == ""
     assert isinstance(obj["notes"], list)
     assert len(obj["results"]) == 1
     entry = obj["results"][0]
@@ -186,6 +189,20 @@ def test_show_dir_payload_shape(python_dir, capsys):
                 "ancestor_signatures", "signature", "source", "file"):
         assert key in m
     assert m["file"].endswith(".py")
+
+
+def test_show_glob_payload_shape(python_dir, capsys):
+    """`show "<dir>/*.py" <symbol> --json` is the mirror of the directory
+    shape: `directory` empty, `glob` carries the pattern, each match
+    still tagged with its own `file`."""
+    pattern = str(python_dir / "*.py")
+    obj = _run_json(["show", pattern, "BaseEntity", "--json"], capsys)
+    assert obj["command"] == "show"
+    assert obj["directory"] == ""
+    assert obj["glob"] == pattern
+    entry = obj["results"][0]
+    assert entry["matches"], "BaseEntity should be found via the glob"
+    assert entry["matches"][0]["file"].endswith(".py")
 
 
 # --- Declaration serialization -------------------------------------------

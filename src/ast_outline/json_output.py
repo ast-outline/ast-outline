@@ -361,21 +361,25 @@ def show_dir_json(
     directory: str,
     query_results: list[tuple[str, list[tuple[Path, SymbolMatch]]]],
     *,
+    glob: str = "",
     view: str = "full",
     no_doc: bool = False,
     notes: list[str] | None = None,
 ) -> str:
-    """Serialize directory-scoped `show` output.
+    """Serialize multi-file `show` output (directory or glob target).
 
     Mirrors :func:`show_json`, but for the case where `show` was pointed
-    at a directory and located the symbol itself: the matches for one
-    query may come from several files, so each match carries its own
-    `file`, and the top-level locator is `directory` instead of `file`.
-    A not-found symbol is an entry with an empty `matches` list (the
-    `notes` field carries the did-you-mean suggestion, if any).
+    at a directory or a glob and located the symbol itself: the matches
+    for one query may come from several files, so each match carries its
+    own `file`. The top-level locator is split across two always-present
+    fields — `directory` (set for a directory target) and `glob` (set
+    for a glob target) — exactly one of which is non-empty. A not-found
+    symbol is an entry with an empty `matches` list (the `notes` field
+    carries the did-you-mean suggestion, if any).
     """
     payload = {
         "directory": directory,
+        "glob": glob,
         "notes": list(notes or []),
         "results": [
             {

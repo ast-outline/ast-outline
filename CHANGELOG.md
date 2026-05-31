@@ -7,6 +7,30 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.1] — 2026-05-31
+
+### Added
+
+- **`show` accepts a glob target, not just a file or directory.** A
+  quoted glob — `show "src/**/*.cs" MailSpec` — is expanded by `show`
+  itself (the shell leaves it literal when quoted, especially `**`) and
+  the matched files are searched exactly like a directory target from
+  v1.3.0: one definition prints its body with a `found … in <file>`
+  note, several print all bodies with a count note, none yields
+  `symbol not found` (naming the glob as the scope) plus a did-you-mean
+  hint. Reuses the same `grep` pre-filter + `find_symbols` resolver — a
+  glob simply hands `grep` the matched file list instead of a directory.
+  A glob that matches no files returns `# note: no files match glob: …`
+  (exit 0); a plain non-glob path that doesn't exist still gets the
+  precise `# note: file not found` (the glob branch only triggers on a
+  path carrying `*` / `?` / `[`).
+
+  In `--json` mode the multi-file `show` envelope now carries **two**
+  always-present locator fields — `directory` (set for a directory
+  target) and `glob` (set for a glob target), exactly one non-empty.
+  `glob` is an additive field; the `directory`-target JSON from v1.3.0
+  is otherwise unchanged.
+
 ## [1.3.0] — 2026-05-31
 
 ### Added

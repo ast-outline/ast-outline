@@ -12,6 +12,7 @@ answer) and return 0. Real internal crashes still propagate normally.
 from __future__ import annotations
 
 import argparse
+import glob
 import re
 import sys
 from pathlib import Path
@@ -233,8 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     p_show = sub.add_parser("show", help="Print source of one or more symbols")
     p_show.add_argument(
         "file",
-        help="Source file, or a directory to search for the symbol's "
-             "definition(s) and show the body in one call",
+        help="Source file, or a directory / quoted glob to search for "
+             "the symbol's definition(s) and show the body in one call",
     )
     p_show.add_argument("symbols", nargs="+", help="Symbol name(s), e.g. `TakeDamage Heal`")
     p_show.add_argument("--no-doc", action="store_true", help="Strip leading doc comments from output")
@@ -839,29 +840,48 @@ def _symbol_search_name(symbol: str) -> str:
     return tail or symbol
 
 
-def _resolve_symbols_in_dir(args, directory, *, no_ignore, exclude):
-    """Locate each requested symbol's definition(s) under ``directory``.
+def _looks_like_glob(s: str) -> bool:
+    """True if ``s`` carries shell-glob metacharacters (`*`, `?`, `[`).
 
-    Reuses the grep file-walk + ``def`` classifier as a cheap pre-filter
-    (it reads every file but only parses the few with a positional hit),
-    then runs the authoritative ``find_symbols`` resolver on just those
-    candidate files. Returns a list of ``(symbol, found, suggestions)``
-    in input order, where ``found`` is a list of ``(file_path,
-    SymbolMatch)`` and ``suggestions`` is the did-you-mean pool (only
-    populated when ``found`` is empty).
+    Used to decide whether a `show` path that is neither a file nor a
+    directory should be treated as a quoted glob to expand, versus a
+    plain missing path that still earns the precise "file not found"
+    note. Conservative: a literal filename containing one of these is
+    rare, and expanding it simply matches that one file. Edge: a
+    *non-existent* path that happens to contain `[` (e.g. `foo[1].cs`)
+    routes here and yields "no files match glob" rather than "file not
+    found" — an acceptable trade for the common case.
+    """
+    return any(ch in s for ch in "*?[")
+
+
+def _resolve_symbols_across(args, search_paths, *, no_ignore, exclude):
+    """Locate each requested symbol's definition(s) across ``search_paths``.
+
+    ``search_paths`` is the list handed to ``grep`` — a single directory
+    (``show DIR sym``) or the files a glob expanded to (``show
+    "src/**/*.cs" sym``); ``grep`` walks directories and takes explicit
+    files alike. Reuses the grep file-walk + ``def`` classifier as a
+    cheap pre-filter (it reads every file but only parses the few with a
+    positional hit), then runs the authoritative ``find_symbols``
+    resolver on just those candidate files. Returns a list of
+    ``(symbol, found, suggestions)`` in input order, where ``found`` is a
+    list of ``(file_path, SymbolMatch)`` and ``suggestions`` is the
+    did-you-mean pool (only populated when ``found`` is empty).
     """
     from .grep import grep, suggest_similar_symbols, KIND_DEF
 
     resolved = []
     for symbol in args.symbols:
         name = _symbol_search_name(symbol)
-        # `grep <name> DIR --kind def` — the exact pattern an agent would
-        # otherwise type as its second call. Literal (no word_match): we
-        # mirror that command's default, and `find_symbols` below exact-
-        # matches the name token, so a substring candidate like
-        # `MailSpecHelper` is collected cheaply then dropped precisely.
+        # `grep <name> <paths> --kind def` — the exact pattern an agent
+        # would otherwise type as its second call. Literal (no
+        # word_match): we mirror that command's default, and
+        # `find_symbols` below exact-matches the name token, so a
+        # substring candidate like `MailSpecHelper` is collected cheaply
+        # then dropped precisely.
         file_results, _ignored, _excluded = grep(
-            [name], [directory],
+            [name], search_paths,
             kind_filter={KIND_DEF},
             no_ignore=no_ignore,
             exclude=exclude,
@@ -882,7 +902,7 @@ def _resolve_symbols_in_dir(args, directory, *, no_ignore, exclude):
         suggestions = []
         if not found:
             suggestions = suggest_similar_symbols(
-                symbol, [directory], no_ignore=no_ignore, exclude=exclude
+                symbol, search_paths, no_ignore=no_ignore, exclude=exclude
             )
         resolved.append((symbol, found, suggestions))
     return resolved
@@ -896,35 +916,43 @@ def _render_did_you_mean(suggestions) -> str:
     )
 
 
-def _show_in_dir(args, directory, json_mode: bool) -> int:
-    """Resolve symbols by searching a directory, then show their bodies.
+def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool) -> int:
+    """Resolve symbols across several files, then show their bodies.
 
-    Collapses the agent's recurring two-call pattern — `grep <symbol> DIR
-    --kind def` to find the file, then `show <file> <symbol>` to read the
-    body — into a single `show DIR <symbol>`. A symbol defined in one
-    file prints its body; a symbol defined in several files prints them
-    all (a directory `show` is still a `show` — it shows what it found).
+    Collapses the agent's recurring two-call pattern — `grep <symbol>
+    <scope> --kind def` to find the file, then `show <file> <symbol>` to
+    read the body — into a single `show <scope> <symbol>`. ``scope`` is a
+    directory (`show DIR sym`) or a glob (`show "src/**/*.cs" sym`); the
+    walk is identical, only the displayed locator differs. A symbol
+    defined in one file prints its body; one defined in several files
+    prints them all (a multi-file `show` is still a `show` — it shows
+    what it found).
+
+    Exactly one of ``directory`` / ``glob_pattern`` is the non-empty
+    user-facing locator string; the other is ``""``. Both ride the JSON
+    envelope so a consumer can tell which scope form produced the result.
     """
+    locator = directory or glob_pattern
     no_ignore = getattr(args, "no_ignore", False)
     exclude = getattr(args, "exclude", []) or []
-    resolved = _resolve_symbols_in_dir(
-        args, directory, no_ignore=no_ignore, exclude=exclude
+    resolved = _resolve_symbols_across(
+        args, search_paths, no_ignore=no_ignore, exclude=exclude
     )
 
     if json_mode:
         notes = []
         for symbol, found, suggestions in resolved:
             if not found:
-                notes.append(f"symbol not found: {symbol} in {directory}")
+                notes.append(f"symbol not found: {symbol} in {locator}")
                 if suggestions:
                     notes.append(
                         f"did you mean (for {symbol}): "
                         f"{_render_did_you_mean(suggestions)}?"
                     )
         print(json_output.show_dir_json(
-            str(directory),
+            directory,
             [(symbol, found) for symbol, found, _ in resolved],
-            view=args.view, no_doc=args.no_doc, notes=notes,
+            glob=glob_pattern, view=args.view, no_doc=args.no_doc, notes=notes,
         ))
         return 0
 
@@ -934,7 +962,7 @@ def _show_in_dir(args, directory, json_mode: bool) -> int:
             print()
         first_block = False
         if not found:
-            print(f"# note: symbol not found: {symbol} in {directory}")
+            print(f"# note: symbol not found: {symbol} in {locator}")
             if suggestions:
                 print(f"# hint: did you mean: {_render_did_you_mean(suggestions)}?")
             continue
@@ -968,7 +996,27 @@ def _cmd_show(args) -> int:
     # Directory target → locate the symbol's definition(s) ourselves and
     # show the body, instead of the old "path is not a file" dead end.
     if path.is_dir():
-        return _show_in_dir(args, path, json_mode)
+        return _show_across(
+            args, [path], directory=str(path), glob_pattern="",
+            json_mode=json_mode,
+        )
+    # Glob target (quoted so the shell didn't expand it) → expand it
+    # ourselves and search the matched files the same way. Only attempt
+    # this when the string actually carries glob metacharacters and isn't
+    # a real file, so a plain missing path still gets the precise
+    # "file not found" note.
+    if not path.is_file() and _looks_like_glob(args.file):
+        matched = sorted(
+            Path(p) for p in glob.glob(args.file, recursive=True)
+        )
+        if not matched:
+            return _emit_error(
+                json_mode, "show", [f"no files match glob: {args.file}"]
+            )
+        return _show_across(
+            args, matched, directory="", glob_pattern=args.file,
+            json_mode=json_mode,
+        )
     if not path.is_file():
         return _emit_error(json_mode, "show", [f"file not found: {path}"])
     adapter = get_adapter_for(path)
@@ -1429,7 +1477,7 @@ SUPPORTED LANGUAGES
 
 COMMANDS
     ast-outline outline <paths...>          Print outline of files or dirs
-    ast-outline show <file|dir> <symbols...> Print source of symbols (dir → find + show)
+    ast-outline show <file|dir|glob> <symbols...> Print source of symbols (dir/glob → find + show)
     ast-outline digest <paths...>           Compact public-API map of a dir
     ast-outline grep <pattern> <paths...>   Find pattern with scope+kind annotations
     ast-outline prompt                      Print the canonical agent prompt snippet
@@ -1468,7 +1516,7 @@ TIPS FOR LLM AGENTS
     1. Start broad → narrow:
          ast-outline digest <dir>        # architecture map of the module
          ast-outline <file>              # one file in detail
-         ast-outline show <file|dir> <Name>  # body of a symbol (dir → finds it)
+         ast-outline show <file|dir|glob> <Name>  # body of a symbol (dir/glob → finds it)
     2. Symbol matching is suffix-based: `Foo.Bar` matches `*.Foo.Bar`.
     3. Use `--no-private --no-fields` for a pure public-API view.
 """
@@ -1516,7 +1564,7 @@ GUIDE_SHOW = """\
 ast-outline show — extract source of one or more symbols
 
 USAGE
-    ast-outline show <file|dir> <symbols...> [--no-doc] [--signature | --full]
+    ast-outline show <file|dir|glob> <symbols...> [--no-doc] [--signature | --full]
 
 SYMBOL SYNTAX
     Short name:      TakeDamage        get_by_id
@@ -1524,18 +1572,24 @@ SYMBOL SYNTAX
     Fully-qualified: Game.Player.PlayerController.TakeDamage
     Matching is suffix-based — short name works unless ambiguous.
 
-DIRECTORY TARGET — find + show in one call
-    Point `show` at a directory and it locates the symbol's definition(s)
-    itself — no separate `grep <symbol> DIR --kind def` first:
+DIRECTORY / GLOB TARGET — find + show in one call
+    Point `show` at a directory (or a quoted glob) and it locates the
+    symbol's definition(s) itself — no separate `grep <symbol> DIR
+    --kind def` first:
         ast-outline show Assets/Scripts/App/Mail MailSpec
+        ast-outline show "Assets/Scripts/**/*.cs" MailSpec   # quote the glob
     - Defined in one file → prints the body, with
       `# note: found 'MailSpec' (class) in <path>`.
     - Defined in several files → prints ALL bodies (a `show` shows what it
       found), with `# note: N definitions of 'MailSpec' across M files`.
     - Not found → `# note: symbol not found` (+ a did-you-mean hint when
       a close name exists). Always exits 0.
-    Honors .gitignore/.ignore like `grep`/`digest`. All flags below apply
-    to the located file(s).
+    A DIRECTORY search honors .gitignore/.ignore like `grep`/`digest`
+    (use --no-ignore / --exclude to adjust). A GLOB is expanded
+    literally — it shows exactly the files the pattern matches, with no
+    ignore-filtering (you already narrowed via the pattern), so quote it
+    to keep the shell from expanding it first (especially `**`). All
+    flags below apply to the located file(s).
 
 MARKDOWN HEADINGS — substring matching
     For .md files, headings match by case-insensitive substring of every
