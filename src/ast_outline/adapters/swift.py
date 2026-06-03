@@ -75,6 +75,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class SwiftAdapter:
     language_name = "swift"
+    display_name = "Swift"
     extensions = {".swift"}
     definition_keywords = frozenset({
         "class", "struct", "enum", "protocol", "func", "extension",

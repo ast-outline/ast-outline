@@ -61,6 +61,7 @@ _MEMBER_NODE_KIND = {
 
 class CSharpAdapter:
     language_name = "csharp"
+    display_name = "C#"
     extensions = {".cs"}
     definition_keywords = frozenset({
         "class", "struct", "interface", "enum",

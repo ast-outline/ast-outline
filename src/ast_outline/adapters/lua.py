@@ -105,6 +105,7 @@ _METAMETHODS: frozenset[str] = frozenset({
 
 class LuaAdapter:
     language_name = "lua"
+    display_name = "Lua"
     extensions = {".lua", ".wlua"}
     definition_keywords = frozenset({"function"})
 

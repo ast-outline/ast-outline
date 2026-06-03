@@ -212,6 +212,7 @@ _DETAILS_RUN_COLLAPSE_THRESHOLD = 3
 
 class HtmlAdapter:
     language_name = "html"
+    display_name = "HTML"
     extensions = {".html", ".htm"}
     # Markup — elements are tag-based, no leading declaration keyword.
     definition_keywords = frozenset()

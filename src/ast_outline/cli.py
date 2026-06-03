@@ -15,6 +15,7 @@ import argparse
 import glob
 import re
 import sys
+import textwrap
 from pathlib import Path
 
 from ._prompt import AGENT_PROMPT
@@ -24,6 +25,7 @@ from .adapters import (
     collect_files_with_stats,
     get_adapter_for,
     supported_extensions,
+    supported_languages,
 )
 from .core import (
     DigestOptions,
@@ -1478,6 +1480,30 @@ def _cmd_digest(args) -> int:
     return 0
 
 
+# The two help sections that list supported languages are built from the
+# adapter registry, not hand-maintained — so a newly added adapter appears
+# in the help automatically and the list can't drift out of sync with what
+# the tool actually parses. Sentinels below are substituted via `.replace`
+# (brace-safe — the guides contain literal `{ get; private set; }`).
+def _render_supported_languages_table() -> str:
+    """Aligned ``name  ext, ext`` rows for the general help, ADAPTERS order."""
+    langs = supported_languages()
+    width = max(len(name) for name, _ in langs)
+    return "\n".join(
+        f"    {name:<{width}}  {', '.join(exts)}" for name, exts in langs
+    )
+
+
+def _render_supported_languages_line() -> str:
+    """Compact ``Name (ext, ext), …`` paragraph, wrapped and indented."""
+    items = ", ".join(
+        f"{name} ({', '.join(exts)})" for name, exts in supported_languages()
+    )
+    return textwrap.fill(
+        items, width=76, initial_indent="    ", subsequent_indent="    "
+    )
+
+
 GUIDE_GENERAL = """\
 ast-outline — structural outline for source files
 
@@ -1488,18 +1514,7 @@ WHAT IT DOES
     reading (or editing) specific parts.
 
 SUPPORTED LANGUAGES
-    C#          .cs
-    Python      .py, .pyi
-    TypeScript  .ts, .tsx, .js, .jsx
-    Java        .java
-    Kotlin      .kt, .kts
-    Scala       .scala, .sc
-    Go          .go
-    Lua         .lua, .wlua
-    Swift       .swift
-    HTML        .html, .htm
-    Markdown    .md
-    YAML        .yaml, .yml
+%%SUPPORTED_LANGUAGES_TABLE%%
 
 COMMANDS
     ast-outline outline <paths...>          Print outline of files or dirs
@@ -1555,10 +1570,7 @@ USAGE
     ast-outline <paths...> [flags]
 
 SUPPORTED
-    C# (.cs), Python (.py, .pyi), TypeScript/JavaScript (.ts/.tsx/.js/.jsx),
-    Java (.java), Kotlin (.kt, .kts), Scala (.scala, .sc), Go (.go),
-    Lua (.lua, .wlua), Swift (.swift), HTML (.html, .htm), Markdown (.md),
-    YAML (.yaml, .yml)
+%%SUPPORTED_LANGUAGES_LINE%%
 
 FLAGS
     --no-private    Hide private members (Python: names starting with _)
@@ -1883,6 +1895,17 @@ NOT TO BE CONFUSED WITH
     placeholder patterns ($_.save()). `ast-outline grep` is a
     scope-annotated symbol search, not a codemod tool.
 """
+
+
+# Substitute the language-list sentinels once, at import — keeps the
+# guides as plain strings for consumers while their content stays derived
+# from the adapter registry.
+GUIDE_GENERAL = GUIDE_GENERAL.replace(
+    "%%SUPPORTED_LANGUAGES_TABLE%%", _render_supported_languages_table()
+)
+GUIDE_OUTLINE = GUIDE_OUTLINE.replace(
+    "%%SUPPORTED_LANGUAGES_LINE%%", _render_supported_languages_line()
+)
 
 
 def _print_guide(topic: str | None = None) -> None:

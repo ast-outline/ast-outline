@@ -162,6 +162,7 @@ _MAGIC_DTOR_NAMES = {"__destruct"}
 
 class PhpAdapter:
     language_name = "php"
+    display_name = "PHP"
     # `.php`  — universal source extension
     # `.phtml` — Zend / older convention for PHP-with-HTML templates
     # `.phps`  — PHP source-display files (server renders highlighted)

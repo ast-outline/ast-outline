@@ -40,6 +40,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class PythonAdapter:
     language_name = "python"
+    display_name = "Python"
     extensions = {".py", ".pyi"}
     definition_keywords = frozenset({"def", "class"})
 

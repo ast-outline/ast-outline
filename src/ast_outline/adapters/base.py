@@ -11,6 +11,12 @@ from ..core import ParseResult
 
 class LanguageAdapter(Protocol):
     language_name: str
+    # Human-readable label shown in ``ast-outline help`` (``C#`` / ``C++``
+    # / ``TypeScript/JavaScript`` …) — distinct from the lowercase machine
+    # ``language_name``. A per-language fact, so it lives on the adapter
+    # rather than a central map; ``adapters.supported_languages`` reads it
+    # to build the help language table dynamically.
+    display_name: str
     extensions: set[str]
 
     # Leading source-language keywords that introduce a declaration whose

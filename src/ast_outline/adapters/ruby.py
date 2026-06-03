@@ -271,6 +271,7 @@ _BLOCK_LABEL_TYPES = frozenset(
 
 class RubyAdapter:
     language_name = "ruby"
+    display_name = "Ruby"
     extensions = {".rb", ".rake", ".gemspec", ".ru"}
     definition_keywords = frozenset({"class", "module", "def"})
     # Convention-named extensionless files. Matched by exact basename

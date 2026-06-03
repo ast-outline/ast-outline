@@ -152,6 +152,14 @@ def supported_extensions() -> set[str]:
     return out
 
 
+def supported_languages() -> list[tuple[str, list[str]]]:
+    """``(display_name, sorted extensions)`` per adapter, in ``ADAPTERS``
+    order. Single source of truth for the help text's language table —
+    a new adapter shows up there automatically, so the list can't drift
+    out of sync with what the tool actually parses."""
+    return [(a.display_name, sorted(a.extensions)) for a in ADAPTERS]
+
+
 def supported_basenames() -> set[str]:
     """Convention-named extensionless files that some adapter claims
     by exact basename match. See :func:`get_adapter_for` rationale."""

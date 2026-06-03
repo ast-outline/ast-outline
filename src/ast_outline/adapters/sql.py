@@ -134,6 +134,7 @@ _COMMENT_TYPES = {"comment", "marginalia"}
 
 class SqlAdapter:
     language_name = "sql"
+    display_name = "SQL"
     extensions = {".sql"}
     # SQL declarations lead with multi-word DDL (`CREATE TABLE foo`), not
     # a single keyword + identifier, so the keyword-strip shape doesn't

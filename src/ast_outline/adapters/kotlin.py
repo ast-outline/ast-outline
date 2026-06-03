@@ -84,6 +84,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class KotlinAdapter:
     language_name = "kotlin"
+    display_name = "Kotlin"
     extensions = {".kt", ".kts"}
     definition_keywords = frozenset({
         "class", "interface", "object", "enum", "fun",

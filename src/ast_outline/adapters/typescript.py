@@ -112,6 +112,7 @@ _TSX_EXTS = {".tsx", ".jsx"}
 
 class TypeScriptAdapter:
     language_name = "typescript"
+    display_name = "TypeScript/JavaScript"
     extensions = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
     definition_keywords = frozenset({
         "class", "interface", "type", "enum", "function", "namespace",

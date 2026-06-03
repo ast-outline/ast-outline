@@ -66,6 +66,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class CssAdapter:
     language_name = "css"
+    display_name = "CSS"
     extensions = {".css"}
     # No leading declaration keyword — rules are selector-based.
     definition_keywords = frozenset()

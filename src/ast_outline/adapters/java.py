@@ -86,6 +86,7 @@ _MEMBER_NODE_KIND = {
 
 class JavaAdapter:
     language_name = "java"
+    display_name = "Java"
     extensions = {".java"}
     definition_keywords = frozenset({"class", "interface", "enum", "record"})
 

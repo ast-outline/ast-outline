@@ -237,6 +237,7 @@ _UE_BODY_MARKERS = frozenset({
 
 class CppAdapter:
     language_name = "cpp"
+    display_name = "C++"
     extensions = {
         ".cpp", ".cc", ".cxx", ".c++",
         ".h", ".hpp", ".hh", ".hxx", ".h++",

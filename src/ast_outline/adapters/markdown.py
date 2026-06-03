@@ -49,6 +49,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class MarkdownAdapter:
     language_name = "markdown"
+    display_name = "Markdown"
     extensions = {".md", ".markdown", ".mdx", ".mdown"}
     # Narrative document — no declaration keywords.
     definition_keywords = frozenset()

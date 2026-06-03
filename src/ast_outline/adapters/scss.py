@@ -72,6 +72,7 @@ _IMPORT_NODE_TYPES = {"import_statement", "use_statement", "forward_statement"}
 
 class ScssAdapter:
     language_name = "scss"
+    display_name = "SCSS"
     extensions = {".scss"}
     # `@mixin` / `@function` lead with `@`, not a bare identifier — the
     # keyword-strip shape (`<kw> Identifier`) never applies.

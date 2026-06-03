@@ -99,6 +99,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class ScalaAdapter:
     language_name = "scala"
+    display_name = "Scala"
     extensions = {".scala", ".sc"}
     definition_keywords = frozenset({
         "class", "trait", "object", "def", "type",

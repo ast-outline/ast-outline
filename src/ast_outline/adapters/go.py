@@ -85,6 +85,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class GoAdapter:
     language_name = "go"
+    display_name = "Go"
     extensions = {".go"}
     definition_keywords = frozenset({"func", "type"})
 

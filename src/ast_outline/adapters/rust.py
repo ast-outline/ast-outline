@@ -144,6 +144,7 @@ _PARSER = Parser(_LANGUAGE)
 
 class RustAdapter:
     language_name = "rust"
+    display_name = "Rust"
     extensions = {".rs"}
     definition_keywords = frozenset({
         "fn", "struct", "enum", "trait", "impl", "type", "mod", "union",

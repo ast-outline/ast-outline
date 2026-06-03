@@ -96,6 +96,7 @@ _MAX_DEPTH = 10
 
 class YamlAdapter:
     language_name = "yaml"
+    display_name = "YAML"
     extensions = {".yaml", ".yml"}
     # Data language — no declaration keywords.
     definition_keywords = frozenset()
