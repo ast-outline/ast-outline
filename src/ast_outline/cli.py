@@ -785,8 +785,11 @@ def _cmd_outline(args) -> int:
         for f, e in errors:
             print(f"# WARN processing {f}: {e}", file=sys.stderr)
         return 0
-    if note:
-        print(note)
+    # On a SUCCESSFUL batch (files found, some dirs pruned) the ignore-note
+    # rides the JSON `notes` only — agents ignore the text line (~5.8% act
+    # on it) and the pruned dirs are almost always junk (node_modules /
+    # build / …). The empty-result path above keeps it in text: there it's
+    # the "your folder was filtered" guard, not noise.
     for i, r in enumerate(results):
         if i > 0:
             print()
@@ -1480,8 +1483,10 @@ def _cmd_digest(args) -> int:
         for f, e in errors:
             print(f"# WARN processing {f}: {e}", file=sys.stderr)
         return 0
-    if note:
-        print(note)
+    # Successful batch: the ignore-note rides the JSON `notes` only (see
+    # `_cmd_outline` for the rationale — agents ignore the text line and
+    # the pruned dirs are almost always junk). The empty-result path above
+    # keeps it in text as the "your folder was filtered" guard.
     print(render_digest(results, opts), end="")
     # Per-file parse errors are warnings on a successful batch — stderr.
     for f, e in errors:

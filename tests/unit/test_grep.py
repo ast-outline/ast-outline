@@ -368,19 +368,34 @@ def test_render_grep_includes_match_count_in_header(tmp_path: Path) -> None:
     assert "(3 matches)" in output
 
 
-def test_render_grep_filtered_footer(tmp_path: Path) -> None:
-    src = tmp_path / "mod.py"
-    src.write_text(
+def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> None:
+    """The 'matches in comments/strings hidden' footer renders only when the
+    file has NO visible matches — there the header reads '(0 matches)' and,
+    without the footer, the agent would wrongly conclude the symbol is
+    absent. When visible matches exist the footer is suppressed as noise;
+    the count still rides the result's ``filtered_count`` (→ JSON)."""
+    # Visible match present (def save) + a comment match → footer suppressed.
+    with_visible = tmp_path / "with_visible.py"
+    with_visible.write_text(
         '# save here\n'
-        'def use():\n'
-        '    save()\n'
         'def save():\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [src])
-    output = render_grep(results)
-    assert "1 matches in comments/strings hidden" in output
-    assert "--include-noise" in output
+    results, _, _ = grep("save", [with_visible])
+    out = render_grep(results)
+    assert "comments/strings hidden" not in out
+    assert results[0].filtered_count == 1   # still tracked for JSON
+
+    # Only a comment match, no visible match → footer present (the guard).
+    comment_only = tmp_path / "comment_only.py"
+    comment_only.write_text(
+        'def other():\n'
+        '    pass  # save mentioned only here\n'
+    )
+    results2, _, _ = grep("save", [comment_only])
+    out2 = render_grep(results2)
+    assert "1 matches in comments/strings hidden" in out2
+    assert "--include-noise" in out2
 
 
 def test_render_grep_arrow_marker_on_match_lines(tmp_path: Path) -> None:

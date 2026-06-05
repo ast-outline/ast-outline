@@ -7,6 +7,7 @@ requiring any flags. These tests pin that contract.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ast_outline.adapters import (
@@ -215,16 +216,26 @@ def test_cli_emits_note_when_ignoring(tmp_path, capsys):
     _write(tmp_path / "main.py", "def f(): pass\n")
     _write(tmp_path / "node_modules" / "junk.py", "def junk(): pass\n")
 
+    # Text mode: the digest body renders, but on a successful batch the
+    # ignore-note is JSON-only now (agents ignore the text line) — not
+    # emitted to stdout text.
     rc = main(["digest", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "# note: ignored" in out
-    # Dir basenames are listed inline so the agent can see *what* got skipped.
-    assert "node_modules" in out
-    assert ".gitignore/.ignore + defaults" in out
-    # The actual digest body still renders.
+    assert "# note: ignored" not in out
     assert "main.py" in out
     assert "junk" not in out
+
+    # JSON mode: the note rides the `notes` array, basenames inline so the
+    # agent can see *what* got skipped (prefix stripped in JSON).
+    rc = main(["digest", str(tmp_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert any(
+        "ignored" in n and "node_modules" in n
+        and ".gitignore/.ignore + defaults" in n
+        for n in data["notes"]
+    )
 
 
 def test_cli_note_lists_multiple_unique_dir_names(tmp_path, capsys):
@@ -234,14 +245,15 @@ def test_cli_note_lists_multiple_unique_dir_names(tmp_path, capsys):
     _write(tmp_path / "sub" / "node_modules" / "y.py", "")  # repeated basename
     _write(tmp_path / "__pycache__" / "z.py", "")
 
-    rc = main(["digest", str(tmp_path)])
-    out = capsys.readouterr().out
+    rc = main(["digest", str(tmp_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
     assert rc == 0
+    note = next(n for n in data["notes"] if "ignored" in n)
     # Both unique basenames appear; the duplicate `node_modules` collapses.
-    assert "node_modules" in out
-    assert "__pycache__" in out
+    assert "node_modules" in note
+    assert "__pycache__" in note
     # Count reflects scale (3 pruned dirs across the tree).
-    assert "ignored 3 dirs" in out
+    assert "ignored 3 dirs" in note
 
 
 def test_cli_no_note_on_clean_dir(tmp_path, capsys):
@@ -255,16 +267,24 @@ def test_cli_no_note_on_clean_dir(tmp_path, capsys):
 
 
 def test_cli_note_on_outline_command(tmp_path, capsys):
-    """The note appears on ``outline`` too, not just ``digest``."""
+    """The note appears on ``outline`` too, not just ``digest`` — JSON-only
+    on a successful batch, same as ``digest``."""
     _write(tmp_path / "main.py", "def f(): pass\n")
     _write(tmp_path / "__pycache__" / "stale.py", "def stale(): pass\n")
 
+    # Text: body renders, no ignore-note line.
     rc = main(["outline", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "# note: ignored" in out
+    assert "# note: ignored" not in out
     assert "main.py" in out
     assert "stale" not in out
+
+    # JSON: the note rides the `notes` array.
+    rc = main(["outline", str(tmp_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert any("ignored" in n and "__pycache__" in n for n in data["notes"])
 
 
 # --- Nested .gitignore files --------------------------------------------
@@ -540,11 +560,12 @@ def test_note_caps_dir_name_list_in_deep_monorepo(tmp_path, capsys):
     ]:
         _write(tmp_path / d / "x.py", "")
 
-    rc = main(["digest", str(tmp_path)])
-    out = capsys.readouterr().out
+    rc = main(["digest", str(tmp_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert "ignored 10 dirs" in out
-    assert "more" in out  # cap suffix surfaces
+    note = next(n for n in data["notes"] if "ignored" in n)
+    assert "ignored 10 dirs" in note
+    assert "more" in note  # cap suffix surfaces
 
 
 # --- --no-ignore flag --------------------------------------------------
@@ -587,15 +608,16 @@ def test_no_ignore_flag_at_collect_files_level(tmp_path):
 
 
 def test_note_includes_no_ignore_hint(tmp_path, capsys):
-    """Note line must teach the agent about the escape hatch."""
+    """Note must teach the agent about the escape hatch (in the JSON note)."""
     _write(tmp_path / "main.py", "def f(): pass\n")
     _write(tmp_path / "node_modules" / "x.py", "")
 
-    rc = main(["digest", str(tmp_path)])
-    out = capsys.readouterr().out
+    rc = main(["digest", str(tmp_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert "--no-ignore" in out
-    assert "disable" in out
+    note = next(n for n in data["notes"] if "ignored" in n)
+    assert "--no-ignore" in note
+    assert "disable" in note
 
 
 def test_cli_note_when_only_ignored_dirs_match(tmp_path, capsys):
@@ -788,11 +810,11 @@ def test_cli_exclude_note_mentions_exclude_source(tmp_path, capsys):
     _write(tmp_path / "src" / "main.py", "def f(): pass\n")
     _write(tmp_path / "tests" / "test_main.py", "def t(): pass\n")
 
-    rc = main(["digest", str(tmp_path), "--exclude", "tests/"])
-    out = capsys.readouterr().out
+    rc = main(["digest", str(tmp_path), "--exclude", "tests/", "--json"])
+    data = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert "# note: ignored" in out
-    assert "+ --exclude" in out
+    note = next(n for n in data["notes"] if "ignored" in n)
+    assert "+ --exclude" in note
 
 
 def test_cli_exclude_bad_pattern_emits_note(tmp_path, capsys):

@@ -1214,7 +1214,14 @@ def _render_file(fr: GrepFileResult) -> str:
         sections.append("## matches")
         sections.extend(_render_code_matches(code_matches))
 
-    if fr.filtered_count:
+    # Surface the hidden comment/string matches only when there are NO
+    # visible matches in this file. Then the header reads "(0 matches)"
+    # and, without this line, the agent would wrongly conclude the symbol
+    # is absent — the note is the false-negative guard. When the file
+    # already has visible matches, the "also N in comments" line is
+    # low-value noise agents ignore (~0.7% act on it), so it's suppressed.
+    # The count rides the JSON `filtered_count` field in either case.
+    if fr.filtered_count and not fr.matches:
         sections.append("")
         sections.append(
             f"# {fr.filtered_count} matches in comments/strings hidden — "

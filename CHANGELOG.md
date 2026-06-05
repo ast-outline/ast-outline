@@ -7,6 +7,32 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.6] — 2026-06-05
+
+### Changed
+
+- **`grep`'s "matches in comments/strings hidden" footer now prints only
+  when a file has no visible matches.** Continuing the v1.3.5 audit: the
+  footer fired on every file that had any comment/string match — but
+  transcripts show agents acted on it (`--include-noise`) under 1% of the
+  time, and ~75% of firings were on files that *already* had visible code
+  matches, where "there are also N mentions in comments" is noise. It now
+  fires only when the file has zero visible matches — the case where the
+  header reads `(0 matches)` and, without the footer, an agent would
+  wrongly conclude the symbol is absent. That false-negative guard is
+  kept in full; the count still rides the JSON `filtered_count` field on
+  every file regardless.
+
+- **The "ignored N dir(s)" note for a *successful* `outline` / `digest`
+  batch moved to JSON-only.** When files were found and some directories
+  were pruned (`node_modules`, `build`, …), the scope note is no longer
+  printed in text — agents acted on it (`--no-ignore`) under 6% of the
+  time and the pruned dirs are almost always junk. It still rides the
+  `--json` `notes` array. The note is **kept in text** on the
+  empty-result path (every candidate directory was filtered), where it is
+  the "your folder was filtered, the path isn't empty" guard rather than
+  noise.
+
 ## [1.3.5] — 2026-06-05
 
 ### Changed
