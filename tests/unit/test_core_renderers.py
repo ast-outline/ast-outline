@@ -1,6 +1,8 @@
 """Tests for render_outline and render_digest."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from ast_outline.adapters.csharp import CSharpAdapter
 from ast_outline.adapters.python import PythonAdapter
 from ast_outline.core import (
@@ -44,6 +46,21 @@ def test_outline_header_has_path_and_line_count(csharp_dir):
     assert display_path(path) in first
     # Header wraps line count with summary counters: "(N lines, X types, ...)"
     assert f"{r.line_count} lines" in first
+
+
+def test_display_path_relativizes_under_cwd():
+    """`display_path` collapses a path under cwd to its relative form (so
+    the absolute prefix isn't repeated per file), and returns paths
+    elsewhere — and already-relative inputs — unchanged so they stay
+    resolvable. Pure path arithmetic: the files need not exist."""
+    cwd = Path.cwd()
+    # Under cwd → relative.
+    assert display_path(cwd / "src" / "foo.py") == "src/foo.py"
+    # Absolute path outside cwd → unchanged (the A1 fallback).
+    outside = Path("/nonexistent-root-xyz/bar.py")
+    assert display_path(outside) == str(outside)
+    # Already-relative input (the --no-ignore walk shape) → unchanged.
+    assert display_path(Path("rel/baz.py")) == "rel/baz.py"
 
 
 def test_outline_includes_line_suffixes_by_default(csharp_dir):
