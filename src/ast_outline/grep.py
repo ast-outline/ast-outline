@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .adapters import collect_files_with_stats, get_adapter_for
-from .core import Declaration, ParseResult
+from .core import Declaration, ParseResult, display_path
 
 
 # --- Kind constants -------------------------------------------------------
@@ -1193,7 +1193,10 @@ def render_grep(file_results: list[GrepFileResult]) -> str:
 def _render_file(fr: GrepFileResult) -> str:
     """Render one file's worth of matches as a self-contained block."""
     visible = len(fr.matches)
-    header = f"# {fr.path} ({visible} match{'es' if visible != 1 else ''})"
+    header = (
+        f"# {display_path(fr.path)} "
+        f"({visible} match{'es' if visible != 1 else ''})"
+    )
 
     import_matches = [m for m in fr.matches if m.kind == KIND_IMPORT]
     code_matches = [m for m in fr.matches if m.kind != KIND_IMPORT]

@@ -7,6 +7,7 @@ from ast_outline.core import (
     Declaration,
     DigestOptions,
     OutlineOptions,
+    display_path,
     render_digest,
     render_outline,
 )
@@ -38,7 +39,9 @@ def test_outline_header_has_path_and_line_count(csharp_dir):
     r = CSharpAdapter().parse(path)
     out = render_outline(r, OutlineOptions())
     first = out.splitlines()[0]
-    assert str(path) in first
+    # Header shows the file path in display form (relative to cwd when the
+    # file lives under it — so the absolute prefix isn't repeated per file).
+    assert display_path(path) in first
     # Header wraps line count with summary counters: "(N lines, X types, ...)"
     assert f"{r.line_count} lines" in first
 

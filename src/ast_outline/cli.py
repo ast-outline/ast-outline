@@ -31,6 +31,7 @@ from .core import (
     DigestOptions,
     OutlineOptions,
     ParseResult,
+    display_path,
     find_symbols,
     render_digest,
     render_outline,
@@ -807,7 +808,10 @@ def _print_show_body(args, path, m) -> None:
     symbol was located. Emits no leading blank line; the caller owns the
     inter-body spacing.
     """
-    print(f"# {path}:{m.start_line}-{m.end_line}  {m.qualified_name}  ({m.kind})")
+    print(
+        f"# {display_path(path)}:{m.start_line}-{m.end_line}  "
+        f"{m.qualified_name}  ({m.kind})"
+    )
     # Breadcrumb: show the enclosing namespace/class chain so the agent
     # knows what the extracted body is nested inside — without having
     # to call `outline` separately. Skipped for top-level symbols.
@@ -928,7 +932,7 @@ def _render_show_candidates(found) -> str:
     note, keeping the re-run guidance identical across output modes.
     """
     return ", ".join(
-        f"{fpath}:{m.start_line} ({m.kind})" for fpath, m in found
+        f"{display_path(fpath)}:{m.start_line} ({m.kind})" for fpath, m in found
     )
 
 
@@ -1001,7 +1005,7 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
             # note names the file (the value the agent's second `grep` call
             # existed to get).
             fpath, m = found[0]
-            print(f"# note: found '{symbol}' ({m.kind}) in {fpath}")
+            print(f"# note: found '{symbol}' ({m.kind}) in {display_path(fpath)}")
             _print_show_body(args, fpath, m)
         else:
             # Ambiguous — the symbol is defined in several places. `show`
@@ -1076,12 +1080,15 @@ def _cmd_show(args) -> int:
             # Each requested symbol gets its own line. We use stdout — the
             # LLM is iterating over these to assemble its answer; it should
             # see "not found" inline next to the matches that did succeed.
-            print(f"# note: symbol not found: {symbol} in {path}")
+            print(f"# note: symbol not found: {symbol} in {display_path(path)}")
             continue
         if len(matches) > 1:
             # Disambiguation summary — informational, but still useful for
             # the agent to see alongside the bodies it's about to read.
-            print(f"# {len(matches)} matches for '{symbol}' in {path}:", file=sys.stderr)
+            print(
+                f"# {len(matches)} matches for '{symbol}' in {display_path(path)}:",
+                file=sys.stderr,
+            )
             for m in matches:
                 print(f"#   {m.qualified_name}  L{m.start_line}-{m.end_line}  ({m.kind})", file=sys.stderr)
             print(file=sys.stderr)
@@ -1159,24 +1166,29 @@ def _cmd_grep(args) -> int:
             ident, kw = stripped
             patterns = [ident]
             auto_kind_def = not args.kind
-            if auto_kind_def:
-                note = (
-                    f"searched {ident!r} as a definition "
-                    f"(stripped leading {kw!r})"
-                )
-            else:
-                note = f"searched {ident!r} (stripped leading {kw!r})"
+            # Record the strip for ``--json`` consumers, but keep it out
+            # of the text output: agents ignore the FYI line and it only
+            # spends tokens on every call (see the auto-promote note below
+            # for the same rationale).
             if json_mode:
-                advisory_notes.append(note)
-            else:
-                print(f"# note: {note}")
+                if auto_kind_def:
+                    advisory_notes.append(
+                        f"searched {ident!r} as a definition "
+                        f"(stripped leading {kw!r})"
+                    )
+                else:
+                    advisory_notes.append(
+                        f"searched {ident!r} (stripped leading {kw!r})"
+                    )
 
     # Auto-promote to regex when any pattern carries unambiguous regex
     # syntax (``\|``, ``\d``, bare ``|``, ``(?:`` etc.). Agents fluent
     # in basic grep / rg often type ``Magnet\|Container`` expecting
-    # alternation, and getting "no matches" on a literal interpretation
-    # forces a wasted retry. The note documents the promotion so the
-    # behavior isn't silent magic.
+    # alternation; a literal interpretation gives "no matches" and forces
+    # a wasted retry, so we promote and just return the matches. The
+    # promotion is recorded in ``advisory_notes`` (surfaced under
+    # ``--json``) but kept out of the text output — agents reliably ignore
+    # the FYI line and it only spends tokens on every call.
     #
     # BRE→ERE conversion: ``\|`` is alternation in basic regex (grep,
     # sed) but Python's ``re`` reads it as escaped literal pipe — the
@@ -1191,22 +1203,19 @@ def _cmd_grep(args) -> int:
             is_regex = True
             original = regex_like[0]
             patterns = [p.replace(r"\|", "|") for p in patterns]
-            converted = original.replace(r"\|", "|")
-            if converted != original:
-                promo = (
-                    f"{original!r} → {converted!r} "
-                    f"(auto-promoted to regex; \\| as alternation; "
-                    f"pass --regex for raw Python regex semantics)"
-                )
-            else:
-                promo = (
-                    f"pattern {original!r} contains regex syntax — "
-                    f"auto-promoted to regex (pass --regex to silence)"
-                )
             if json_mode:
-                advisory_notes.append(promo)
-            else:
-                print(f"# note: {promo}")
+                converted = original.replace(r"\|", "|")
+                if converted != original:
+                    advisory_notes.append(
+                        f"{original!r} → {converted!r} "
+                        f"(auto-promoted to regex; \\| as alternation; "
+                        f"pass --regex for raw Python regex semantics)"
+                    )
+                else:
+                    advisory_notes.append(
+                        f"pattern {original!r} contains regex syntax — "
+                        f"auto-promoted to regex (pass --regex to silence)"
+                    )
 
     # Validate regex compiles before walking the filesystem. The matcher
     # combines patterns and compiles again, but a failure there raises
@@ -1391,12 +1400,12 @@ def _cmd_grep(args) -> int:
     if args.files_only:
         for fr in file_results:
             if fr.matches:
-                print(fr.path)
+                print(display_path(fr.path))
         return 0
     if args.count_only:
         for fr in file_results:
             if fr.matches:
-                print(f"{fr.path}:{len(fr.matches)}")
+                print(f"{display_path(fr.path)}:{len(fr.matches)}")
         return 0
     print(render_grep(file_results))
     return 0

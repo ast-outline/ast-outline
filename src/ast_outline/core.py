@@ -332,6 +332,23 @@ def filter_declarations(
 # --- Renderers ------------------------------------------------------------
 
 
+def display_path(path: Path) -> str:
+    """Render a file path for an output header: relative to the current
+    working directory when the file lives under it, else the path as-is.
+
+    Agents run ``ast-outline`` from the project root, so a result spanning
+    many files would otherwise repeat the absolute prefix
+    (``/Users/.../project/src/...``) on every header — pure token waste.
+    Collapsing to ``src/foo.py`` reclaims that on each line. Paths outside
+    cwd (an absolute argument elsewhere on disk, or the ``--no-ignore``
+    walk that preserves the caller's input shape) are returned unchanged
+    so they stay resolvable when fed back into ``show`` / ``Read``."""
+    cwd = Path.cwd()
+    if path.is_relative_to(cwd):
+        return str(path.relative_to(cwd))
+    return str(path)
+
+
 def render_outline(result: ParseResult, opts: OutlineOptions) -> str:
     # Same `[tiny]` / `[medium]` / `[large]` label digest stamps next to
     # each filename — emitted here too so an agent calling `outline`
@@ -340,7 +357,9 @@ def render_outline(result: ParseResult, opts: OutlineOptions) -> str:
     # English label triggers more reliably than parsing the raw token
     # number when the agent reads cold without having seen the digest.
     label = _size_label(_estimate_tokens(result.source))
-    lines: list[str] = [_format_file_header(f"# {result.path} {label}", result)]
+    lines: list[str] = [
+        _format_file_header(f"# {display_path(result.path)} {label}", result)
+    ]
     warn = _format_error_warning(result)
     if warn:
         lines.append(warn)

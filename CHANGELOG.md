@@ -7,6 +7,37 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.5] — 2026-06-05
+
+### Changed
+
+- **`grep` no longer narrates its auto-recognition in text output —
+  the advisory notes were pure token noise.** Two `# note:` lines used
+  to print on every relevant call: the regex auto-promotion note (when a
+  pattern carries regex syntax such as `\|` alternation) and the
+  keyword-strip note (when a leading `class` / `def` / `struct` … is
+  stripped). In practice agents type `\|` out of grep/rg habit and got
+  the same ~25-token note on nearly every alternation search — and kept
+  typing `\|`, so the "pass `--regex` to silence" advice changed nothing.
+  The notes are now dropped from the text output. The underlying
+  behavior is untouched: auto-promotion, the `\|`→`|` BRE→ERE conversion,
+  and keyword-stripping with auto-narrow-to-def all still happen, and a
+  genuinely invalid auto-promoted regex still errors. The notes are also
+  preserved verbatim in the `--json` `notes` array, so any machine
+  consumer that wants the rewrite trail keeps it.
+
+- **`grep`, `show`, and `outline` print file paths relative to the
+  current directory instead of repeating the absolute prefix on every
+  file.** A multi-file result previously stamped the full
+  `/Users/…/project/src/…` prefix into every per-file header (and into
+  `-l` / `-c` lines and `show`'s candidate lists) — the same long prefix
+  paid for on each row. Paths under the working directory now collapse to
+  their `src/foo.py` form. Paths outside the working directory (an
+  absolute argument elsewhere on disk, or the `--no-ignore` walk that
+  preserves the caller's input shape) are left unchanged so they stay
+  resolvable when fed straight back into `show` / `Read`. `digest` was
+  already directory-grouped and is unaffected.
+
 ## [1.3.4] — 2026-06-03
 
 ### Fixed

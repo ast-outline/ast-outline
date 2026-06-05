@@ -3274,7 +3274,9 @@ def test_definition_keywords_sourced_from_adapters() -> None:
 
 def test_cli_strip_keyword_class_equals_kind_def(tmp_path: Path) -> None:
     """``grep "class X"`` (literal) returns the same matches as
-    ``grep "X" --kind def`` and explains the strip in a ``# note:``."""
+    ``grep "X" --kind def``. The strip is silent in text output — it only
+    rides the JSON ``notes`` array (see
+    ``test_cli_strip_keyword_note_rides_json_envelope``)."""
     src = tmp_path / "mod.py"
     src.write_text(
         "class MailSpec:\n"
@@ -3285,8 +3287,8 @@ def test_cli_strip_keyword_class_equals_kind_def(tmp_path: Path) -> None:
     )
     stripped = _run_cli("grep", "class MailSpec", str(src))
     baseline = _run_cli("grep", "MailSpec", str(src), "--kind", "def")
-    # Note explains the strip and the auto-def narrow.
-    assert "# note: searched 'MailSpec' as a definition (stripped leading 'class')" in stripped
+    # The strip is not narrated in text — agents ignore the FYI line.
+    assert "stripped leading" not in stripped
     # The actual result rows (lines that aren't notes/hints) are identical.
     def _rows(out: str) -> list[str]:
         return [ln for ln in out.splitlines() if not ln.startswith("#")]
@@ -3307,16 +3309,20 @@ def test_cli_strip_keyword_across_languages(
     tmp_path: Path, keyword: str, lang_file: str, decl: str
 ) -> None:
     """Each language's own definition keyword is stripped and the symbol
-    is found as a definition."""
+    is found as a definition (``[def]`` tag), with no text-mode note."""
     src = tmp_path / lang_file
     # Pull the declared name out of the snippet (first identifier after
     # the keyword) so the test stays in lockstep with the snippet.
     name = decl.split(keyword, 1)[1].split()[0].rstrip("(){:")
     src.write_text(decl + "\n")
     out = _run_cli("grep", f"{keyword} {name}", str(src))
-    assert f"stripped leading '{keyword}'" in out
+    # Stripped + auto-narrowed to def: the match lands on the name and is
+    # tagged [def] (a literal "<keyword> name" search would tag it a ref).
+    assert "[def]" in out
     assert name in out
     assert "no matches" not in out
+    # The strip is silent in text output.
+    assert "stripped leading" not in out
 
 
 def test_cli_strip_keyword_respects_explicit_regex(tmp_path: Path) -> None:
@@ -3334,7 +3340,8 @@ def test_cli_strip_keyword_respects_explicit_regex(tmp_path: Path) -> None:
 def test_cli_strip_keyword_keeps_explicit_kind(tmp_path: Path) -> None:
     """When the user gave an explicit ``--kind``, the keyword is still
     stripped but the kind is NOT auto-narrowed to def — their filter
-    wins, and the note drops the "as a definition" phrasing."""
+    wins. The strip is silent in text; the JSON note drops the
+    "as a definition" phrasing."""
     src = tmp_path / "mod.py"
     src.write_text(
         "class MailSpec:\n"
@@ -3344,10 +3351,16 @@ def test_cli_strip_keyword_keeps_explicit_kind(tmp_path: Path) -> None:
         "    m = MailSpec()\n"
     )
     out = _run_cli("grep", "class MailSpec", str(src), "--kind", "call")
-    assert "# note: searched 'MailSpec' (stripped leading 'class')" in out
-    assert "as a definition" not in out
-    # --kind call kept → the instantiation is found.
+    # --kind call kept (no auto-narrow to def) → the instantiation is found.
     assert "MailSpec()" in out
+    assert "stripped leading" not in out
+    # The JSON note documents the strip without the "as a definition" phrase.
+    import json
+    data = json.loads(
+        _run_cli("grep", "class MailSpec", str(src), "--kind", "call", "--json")
+    )
+    assert any("stripped leading 'class'" in n for n in data["notes"])
+    assert not any("as a definition" in n for n in data["notes"])
 
 
 def test_cli_strip_keyword_not_triggered_on_normal_queries(tmp_path: Path) -> None:
@@ -3459,13 +3472,18 @@ def test_cli_did_you_mean_skipped_for_regex(tmp_path: Path) -> None:
 def test_cli_did_you_mean_composes_with_keyword_strip(tmp_path: Path) -> None:
     """``grep "class MissSortPiles"`` strips the keyword, finds nothing
     for the (plural) identifier, then suggests the real singular class —
-    both heuristics fire on one call."""
+    both heuristics fire on one call. The strip is silent in text (it
+    rides the JSON notes); the did-you-mean hint is the text nudge."""
     src = tmp_path / "store.py"
     src.write_text("class MissSortPile:\n    pass\n")
     out = _run_cli("grep", "class MissSortPiles", str(src))
-    assert "stripped leading 'class'" in out
+    assert "stripped leading" not in out
     assert "# hint: did you mean:" in out
     assert "MissSortPile" in out
+    # The strip still rode the JSON notes — proof it fired on this call.
+    import json
+    data = json.loads(_run_cli("grep", "class MissSortPiles", str(src), "--json"))
+    assert any("stripped leading 'class'" in n for n in data["notes"])
 
 
 def test_cli_did_you_mean_reports_count_for_repeated_name(tmp_path: Path) -> None:
