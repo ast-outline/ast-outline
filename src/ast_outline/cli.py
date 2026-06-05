@@ -925,17 +925,24 @@ def _render_did_you_mean(suggestions) -> str:
     )
 
 
-def _render_show_candidates(found) -> str:
+def _render_show_candidates(found, *, absolute: bool = False) -> str:
     """Format the candidate locations for an ambiguous directory/glob `show`.
 
     ``found`` is the list of ``(file_path, SymbolMatch)`` the resolver
     returned for one symbol. Each candidate is rendered as
     ``path:line (kind)`` so the agent can re-run `show <file> <symbol>`
-    against exactly one of them. Used by both the text note and the JSON
-    note, keeping the re-run guidance identical across output modes.
+    against exactly one of them.
+
+    Path form follows the channel convention: the **text** note uses
+    cwd-relative paths (``display_path``), matching the rest of the text
+    output; the **JSON** note passes ``absolute=True`` so the path matches
+    the structured ``file`` field in the same envelope and the
+    JSON-is-absolute convention (a JSON consumer gets one resolvable form,
+    not a prose path in a different shape than the structured one).
     """
+    render = str if absolute else display_path
     return ", ".join(
-        f"{display_path(fpath)}:{m.start_line} ({m.kind})" for fpath, m in found
+        f"{render(fpath)}:{m.start_line} ({m.kind})" for fpath, m in found
     )
 
 
@@ -984,7 +991,8 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
                 # matches carry the structured form (see show_dir_json).
                 notes.append(
                     f"{len(found)} definitions of '{symbol}' "
-                    f"— re-run with one of: {_render_show_candidates(found)}"
+                    f"— re-run with one of: "
+                    f"{_render_show_candidates(found, absolute=True)}"
                 )
         print(json_output.show_dir_json(
             directory,

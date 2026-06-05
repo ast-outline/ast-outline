@@ -167,6 +167,26 @@ def test_show_ambiguous_symbol_prints_all_matches(csharp_dir, capsys):
     assert "matches" in captured.err.lower()
 
 
+def test_render_show_candidates_path_form():
+    """The candidate-list helper renders cwd-relative paths for the text
+    note (default) and absolute paths for the JSON note (``absolute=True``)
+    — so the JSON prose matches the structured ``file`` field in the same
+    envelope (JSON-is-absolute, text-is-cwd-relative). A path *under* cwd
+    is used so the two forms genuinely differ; the helper reads only
+    ``start_line`` / ``kind``, so a lightweight stand-in suffices."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from ast_outline.cli import _render_show_candidates
+
+    p = Path.cwd() / "pkg" / "mod.py"
+    found = [(p, SimpleNamespace(start_line=10, kind="class"))]
+    # Text note: cwd-relative.
+    assert _render_show_candidates(found) == "pkg/mod.py:10 (class)"
+    # JSON note: absolute, matching the structured `file` field.
+    assert _render_show_candidates(found, absolute=True) == f"{p}:10 (class)"
+
+
 def test_show_not_found_returns_zero_with_note(csharp_dir, capsys):
     """LLM-friendly mode: missing symbol yields rc=0 + ``# note:`` on stdout."""
     rc = main(["show", str(csharp_dir / "unity_behaviour.cs"), "NoSuchThing"])

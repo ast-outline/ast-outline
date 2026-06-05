@@ -7,6 +7,25 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.7] — 2026-06-05
+
+### Fixed
+
+- **`show --json` (directory / glob mode): the ambiguous-symbol candidate
+  list in `notes` now uses absolute paths, matching the structured `file`
+  field in the same envelope.** v1.3.5 routed the candidate-list note
+  through the shared text helper, which made it cwd-relative — so within
+  one `show --json` response the prose note (`re-run with one of:
+  a.py:1 …`) disagreed with each match's structured `file`
+  (`/abs/…/a.py`), tripping consumers that read the note to drive a
+  follow-up call. The note is now absolute, matching `file`. This
+  formalizes the path convention: **JSON paths are absolute and
+  self-contained; text-mode paths are cwd-relative** (compact for inline
+  agent reading). The structured fields are unchanged — `show`'s per-match
+  `file` was already absolute, and the `outline` / `grep` / `digest` file
+  `path` stays root-relative against the envelope `root`. No schema bump
+  (no field renamed, removed, or retyped).
+
 ## [1.3.6] — 2026-06-05
 
 ### Changed
