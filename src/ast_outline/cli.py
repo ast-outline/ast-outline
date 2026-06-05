@@ -204,7 +204,34 @@ def _normalize_grep_argv(argv: list[str]) -> list[str]:
     return [argv[0], promoted_value, *new_rest]
 
 
+def _force_utf8_io() -> None:
+    """Make stdout/stderr emit UTF-8 regardless of the platform code page.
+
+    On Windows the console streams inherit a legacy code page (e.g. cp1251);
+    printing any non-ASCII character then dies with ``UnicodeEncodeError``.
+    Output legitimately carries arbitrary Unicode from the user's own source
+    files (identifiers, string defaults) plus our own ``→ — …`` notes, so we
+    can't sanitise it away — we reconfigure the streams to UTF-8 instead.
+    Agent harnesses already read the stdout pipe as UTF-8 (``json_output``
+    serialises with ``ensure_ascii=False``), so this just formalises the
+    existing assumption. Never raises: a stream without ``reconfigure``
+    (e.g. pytest's capture object) or a closed pipe is skipped silently.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        encoding = (getattr(stream, "encoding", "") or "").replace("-", "").lower()
+        if encoding == "utf8":
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_io()
     if argv is None:
         argv = sys.argv[1:]
     if not argv:

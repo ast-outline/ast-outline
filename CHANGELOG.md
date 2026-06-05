@@ -7,6 +7,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.3.8] — 2026-06-06
+
+### Fixed
+
+- **No more `UnicodeEncodeError` crash on Windows consoles using a legacy
+  code page (cp1251, cp866, …).** `ast-outline <file>` on such a console
+  died with `UnicodeEncodeError: 'charmap' codec can't encode character`
+  the moment any non-ASCII character reached stdout — either one of the
+  tool's own `→ — …` notes/legends, or arbitrary Unicode echoed from the
+  user's own source (identifiers, string defaults, an emoji in a literal).
+  Since that content is intrinsic to the output and can't be sanitized
+  away, the CLI now reconfigures stdout/stderr to UTF-8 at startup (only
+  when they aren't already UTF-8), which formalizes the assumption that
+  `json_output` already made with `ensure_ascii=False`. The previous
+  `PYTHONIOENCODING=utf-8` workaround is no longer needed.
+
 ## [1.3.7] — 2026-06-05
 
 ### Fixed
