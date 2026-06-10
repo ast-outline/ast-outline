@@ -53,6 +53,9 @@ class MarkdownAdapter:
     extensions = {".md", ".markdown", ".mdx", ".mdown"}
     # Narrative document — no declaration keywords.
     definition_keywords = frozenset()
+    comment_line_prefixes = ()
+    import_line_prefixes = ()
+    render_family = "markdown"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -216,6 +216,9 @@ class HtmlAdapter:
     extensions = {".html", ".htm"}
     # Markup — elements are tag-based, no leading declaration keyword.
     definition_keywords = frozenset()
+    comment_line_prefixes = ()
+    import_line_prefixes = ()
+    render_family = "html"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -671,9 +674,13 @@ def _collect_text(node: Node, src: bytes) -> str:
     children (rare — e.g. ``<h1><img alt="logo"></h1>``).
     """
     pieces: list[str] = []
-    stack: list[Node] = [node]
-    while stack:
-        n = stack.pop()
+
+    # Recursive preorder walk so text lands in SOURCE order. The
+    # previous LIFO-stack version appended a node's direct text children
+    # inline while deferring element children to the stack — for
+    # ``<h2><a>Section</a> title</h2>`` that emitted ``" title"`` before
+    # the ``<a>``'s inner ``"Section"`` (→ ``"titleSection"``).
+    def visit(n: Node) -> None:
         for child in n.children:
             if child.type == "text":
                 pieces.append(text_of(child, src))
@@ -683,8 +690,14 @@ def _collect_text(node: Node, src: bytes) -> str:
                 # which adds dependency surface for marginal gain.
                 pieces.append(text_of(child, src))
             else:
-                stack.append(child)
-    return " ".join("".join(pieces).split())
+                visit(child)
+
+    visit(node)
+    # Join pieces with a space, then collapse: tree-sitter-html trims
+    # the whitespace between an inline element and adjacent text out of
+    # the ``text`` nodes, so butt-joining would fuse words across
+    # element boundaries (``<a>Section</a> title`` → ``Sectiontitle``).
+    return " ".join(" ".join(pieces).split())
 
 
 def _truncate(value: str, limit: int) -> str:

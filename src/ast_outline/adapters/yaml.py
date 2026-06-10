@@ -100,6 +100,20 @@ class YamlAdapter:
     extensions = {".yaml", ".yml"}
     # Data language — no declaration keywords.
     definition_keywords = frozenset()
+    comment_line_prefixes = ('#',)
+    import_line_prefixes = ()
+    render_family = "yaml"
+
+    def file_format_hint(self, declarations: list[Declaration]) -> str:
+        """Format annotation for the file header (`— OpenAPI 3.0.0, 23
+        paths` / `— Deployment apps/v1 prod/api`). Empty string when no
+        specific format is detected, or when the file is multi-document
+        — per-doc annotations live in each `--- doc N of M` separator
+        line instead, so a file-level hint would duplicate them."""
+        n_docs = sum(1 for d in declarations if d.kind == KIND_YAML_DOC)
+        if n_docs > 1:
+            return ""
+        return _format_for_doc(declarations) or ""
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -281,3 +281,21 @@ def test_digest_does_not_leak_children_of_filtered_private_node():
     assert "%_internal-base" not in text
     # The nested child of that private parent must also be hidden.
     assert ".leak-me" not in text
+
+
+def test_nested_compound_class_keeps_dot_on_resolution(tmp_path):
+    """`&.active` and `&__header` share one grammar shape
+    (nesting_selector + class_name); only the literal `.` in the source
+    tells them apart. The old extractor dropped the dot, resolving
+    `.card { &.active {} }` to `.cardactive` — unfindable by the real
+    compound `.card.active`. BEM `&__header` → `.card__header` must
+    keep working."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.scss"
+    p.write_text(
+        ".card { &.active { font-weight: bold; } &__header { color: red; } }\n",
+        encoding="utf-8",
+    )
+    r = ScssAdapter().parse(p)
+    assert find_symbols(r, ".card.active"), "compound `&.active` lost"
+    assert find_symbols(r, ".card__header"), "BEM `&__header` regressed"

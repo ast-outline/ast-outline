@@ -104,6 +104,9 @@ class ScalaAdapter:
     definition_keywords = frozenset({
         "class", "trait", "object", "def", "type",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -781,17 +784,43 @@ def _property_to_decl(
 
 
 def _property_name(node: Node, src: bytes) -> Optional[str]:
-    """Name extraction. A regular `val x: T = ...` has `identifier`
-    directly; a pattern binding `val (a, b) = ...` has `tuple_pattern`
-    (we pick its first identifier).
+    """Name extraction. The FIRST named child of a val/var definition
+    is its binding side — a bare `identifier`, a `tuple_pattern`
+    (`val (a, b) = ...`), a `case_class_pattern`
+    (`val List(h, t) = ...`), an `infix_pattern` (`val h :: t = ...`).
+    Everything after it belongs to the type / RHS, so only that first
+    child may name the declaration: scanning further used to leak the
+    RHS identifier as the "name" when the pattern shape wasn't
+    recognised (`val List(h, t) = myList` → field `myList`).
     """
+    # Leading `modifiers` (`protected`, `lazy`) / `annotation` nodes
+    # precede the binding — skip them; the binding is the first child
+    # after that prefix.
+    head: Optional[Node] = None
     for c in node.named_children:
+        if c.type in ("modifiers", "annotation", "comment"):
+            continue
+        head = c
+        break
+    if head is None:
+        return None
+    if head.type == "identifier":
+        return _text(head, src)
+    if head.type.endswith("pattern"):
+        return _first_bound_identifier(head, src)
+    return None
+
+
+def _first_bound_identifier(pattern: Node, src: bytes) -> Optional[str]:
+    """First `identifier` bound anywhere inside a binding pattern —
+    `h` in `List(h, t)`, `a` in `((a, b), c)`. Type names inside the
+    pattern are `type_identifier` nodes and don't match."""
+    for c in pattern.named_children:
         if c.type == "identifier":
             return _text(c, src)
-        if c.type == "tuple_pattern":
-            for cc in c.named_children:
-                if cc.type == "identifier":
-                    return _text(cc, src)
+        found = _first_bound_identifier(c, src)
+        if found is not None:
+            return found
     return None
 
 

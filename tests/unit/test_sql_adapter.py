@@ -817,3 +817,31 @@ def test_broken_file_recovers_valid_neighbours(sql_dir):
 def test_broken_file_reports_error_count(sql_dir):
     result = SqlAdapter().parse(sql_dir / "broken.sql")
     assert result.error_count > 0
+
+
+def test_function_fallback_skips_block_comments_after_late_procedure(tmp_path):
+    """`skip_ranges` is binary-searched by `_in_any_range` and must stay
+    sorted. The PROCEDURE loop used a plain `append`, so a procedure
+    LATER in the file than a block comment left the list unsorted and
+    the FUNCTION fallback extracted fake declarations from inside
+    `/* ... */` comments."""
+    p = tmp_path / "a.sql"
+    p.write_text(
+        "CREATE PROCEDURE init() LANGUAGE plpgsql AS $$ BEGIN END; $$;\n"
+        "/*\n"
+        "CREATE OR REPLACE FUNCTION fake() RETURNS void\n"
+        "*/\n"
+        "CREATE DOMAIN email AS TEXT;\n"
+        "CREATE OR REPLACE FUNCTION real_func(p email) RETURNS VOID\n"
+        "LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN END; $$;\n",
+        encoding="utf-8",
+    )
+    r = SqlAdapter().parse(p)
+    names = []
+    def walk(ds):
+        for d in ds:
+            names.append(d.name)
+            walk(d.children)
+    walk(r.declarations)
+    assert "fake" not in names, names
+    assert "real_func" in names, names

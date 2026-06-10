@@ -89,6 +89,9 @@ class KotlinAdapter:
     definition_keywords = frozenset({
         "class", "interface", "object", "enum", "fun",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

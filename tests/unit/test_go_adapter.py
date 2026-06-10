@@ -707,3 +707,56 @@ def test_generic_method_value_receiver_groups(go_dir):
     coord = _find(r.declarations, kind=KIND_STRUCT, name="Coordinate")
     method_names = {c.name for c in coord.children if c.kind == KIND_METHOD}
     assert "Translate" in method_names
+
+
+# --- namespace stretch / interface embeddings ------------------------------
+
+
+def test_package_range_covers_regrouped_methods(tmp_path):
+    """Pass 2 regroups receiver methods under their struct, extending
+    the STRUCT's range — but the namespace stretch looked only at its
+    LAST child. A plain function declared between the struct and its
+    methods clipped the package range short of the last method."""
+    p = tmp_path / "a.go"
+    p.write_text(
+        "package pkg\n\n"
+        "type Animal struct {\n\tName string\n}\n\n"
+        "func NewAnimal(name string) *Animal {\n\treturn &Animal{Name: name}\n}\n\n"
+        "func (a *Animal) Speak() string {\n\treturn a.Name\n}\n",
+        encoding="utf-8",
+    )
+    r = GoAdapter().parse(p)
+    ns = r.declarations[0]
+    assert ns.end_line == 13, ns.end_line
+    assert ns.end_byte == max(
+        c.end_byte for c in ns.children
+    ), (ns.end_byte, [c.end_byte for c in ns.children])
+
+
+def test_interface_qualified_embeddings_become_bases(tmp_path):
+    """`io.Reader` inside an interface body is a `qualified_type`, not
+    a `type_identifier` — the old loop never matched it and dropped
+    every package-qualified embedding from `bases`."""
+    p = tmp_path / "a.go"
+    p.write_text(
+        "package pkg\n\n"
+        'import "io"\n\n'
+        "type ReadWriter interface {\n\tio.Reader\n\tio.Writer\n\tClose() error\n}\n",
+        encoding="utf-8",
+    )
+    r = GoAdapter().parse(p)
+    iface = _find(r.declarations, name="ReadWriter")
+    assert iface.bases == ["io.Reader", "io.Writer"], iface.bases
+
+
+def test_interface_union_constraint_keeps_every_type(tmp_path):
+    """`int | int32 | int64` is one type_elem with several children —
+    the `break` after the first match kept only `int`."""
+    p = tmp_path / "a.go"
+    p.write_text(
+        "package pkg\n\ntype Number interface {\n\tint | int32 | int64\n}\n",
+        encoding="utf-8",
+    )
+    r = GoAdapter().parse(p)
+    iface = _find(r.declarations, name="Number")
+    assert iface.bases == ["int", "int32", "int64"], iface.bases

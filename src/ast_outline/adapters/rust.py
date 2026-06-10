@@ -149,6 +149,14 @@ class RustAdapter:
     definition_keywords = frozenset({
         "fn", "struct", "enum", "trait", "impl", "type", "mod", "union",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('use ',)
+    render_family = "code"
+    # Lifetimes (`'a`, `'static`, `'_`) are UNPAIRED single quotes —
+    # grep's quote-counting string heuristic must not treat them as
+    # string delimiters, or every match after `&'a` on a line would
+    # classify as [string]. See LanguageAdapter's optional attributes.
+    single_quote_lifetimes = True
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

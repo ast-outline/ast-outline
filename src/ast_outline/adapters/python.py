@@ -43,6 +43,9 @@ class PythonAdapter:
     display_name = "Python"
     extensions = {".py", ".pyi"}
     definition_keywords = frozenset({"def", "class"})
+    comment_line_prefixes = ('#',)
+    import_line_prefixes = ('import ', 'from ')
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

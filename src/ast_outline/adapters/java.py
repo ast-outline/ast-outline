@@ -89,6 +89,9 @@ class JavaAdapter:
     display_name = "Java"
     extensions = {".java"}
     definition_keywords = frozenset({"class", "interface", "enum", "record"})
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

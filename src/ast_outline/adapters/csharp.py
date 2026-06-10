@@ -67,6 +67,9 @@ class CSharpAdapter:
         "class", "struct", "interface", "enum",
         "record", "delegate", "namespace",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('global using ', 'using ')
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -131,8 +134,7 @@ def _walk_top(node: Node, src: bytes, out: list[Declaration]) -> None:
                 out.append(type_decl)
         elif kind in _MEMBER_NODE_KIND:
             # Rare: top-level members (global using etc)
-            decl = _member_to_decl(child, src)
-            if decl is not None:
+            for decl in _member_to_decls(child, src):
                 if file_scoped_ns is not None:
                     file_scoped_ns.children.append(decl)
                 else:
@@ -150,9 +152,7 @@ def _ns_to_decl(node: Node, src: bytes) -> Declaration:
         if k in _TYPE_NODE_KIND:
             children.append(_type_to_decl(c, src))
         elif k in _MEMBER_NODE_KIND:
-            m = _member_to_decl(c, src)
-            if m is not None:
-                children.append(m)
+            children.extend(_member_to_decls(c, src))
         elif k in ("namespace_declaration", "file_scoped_namespace_declaration"):
             children.append(_ns_to_decl(c, src))
     return Declaration(
@@ -184,10 +184,10 @@ def _type_to_decl(node: Node, src: bytes) -> Declaration:
             if k in _TYPE_NODE_KIND:
                 children.append(_type_to_decl(c, src))
             elif k in _MEMBER_NODE_KIND:
-                m = _member_to_decl(c, src)
-                if m is not None:
-                    children.append(m)
+                children.extend(_member_to_decls(c, src))
 
+    # Explicit None check — see _member_to_decls for the byte-0 trap.
+    doc_start = _leading_doc_start_byte(node, src)
     return Declaration(
         kind=kind,
         name=name,
@@ -200,16 +200,25 @@ def _type_to_decl(node: Node, src: bytes) -> Declaration:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=node.start_byte if doc_start is None else doc_start,
         children=children,
     )
 
 
-def _member_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
+def _member_to_decls(node: Node, src: bytes) -> list[Declaration]:
+    """All declarations one member node produces.
+
+    One for most members; one PER declarator for multi-declarator field /
+    event-field declarations (``int x, y, z;``,
+    ``event EventHandler A, B;``) — a single-name path would silently
+    drop every declarator after the first. The siblings share the
+    declaration's signature and byte/line range (the source statement is
+    one line; ``show y`` should print the whole ``int x, y, z;``).
+    """
     kind = _MEMBER_NODE_KIND[node.type]
-    name = _member_name(node, src)
-    if not name:
-        return None
+    names = _member_names(node, src)
+    if not names:
+        return []
     attrs = _attrs(node, src)
     docs = _xml_docs(node, src)
     visibility = _visibility(node, src, is_member=True, parent_type_kind=_parent_type_kind(node))
@@ -217,19 +226,26 @@ def _member_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         signature = _property_signature(node, src)
     else:
         signature = _member_signature_text(node, src)
-    return Declaration(
-        kind=kind,
-        name=name,
-        signature=signature,
-        attrs=attrs,
-        docs=docs,
-        visibility=visibility,
-        start_line=node.start_point[0] + 1,
-        end_line=node.end_point[0] + 1,
-        start_byte=node.start_byte,
-        end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
-    )
+    doc_start = _leading_doc_start_byte(node, src)
+    return [
+        Declaration(
+            kind=kind,
+            name=name,
+            signature=signature,
+            attrs=attrs,
+            docs=docs,
+            visibility=visibility,
+            start_line=node.start_point[0] + 1,
+            end_line=node.end_point[0] + 1,
+            start_byte=node.start_byte,
+            end_byte=node.end_byte,
+            # Explicit None check: `doc_start or node.start_byte` would
+            # treat a doc comment at byte 0 (file starts with `///`) as
+            # "no doc" and slice past it.
+            doc_start_byte=node.start_byte if doc_start is None else doc_start,
+        )
+        for name in names
+    ]
 
 
 # --- Signature extraction -------------------------------------------------
@@ -311,9 +327,24 @@ def _strip_leading_attrs(text: str) -> str:
         depth = 0
         i = 0
         while i < len(s):
-            if s[i] == "[":
+            ch = s[i]
+            if ch in "\"'":
+                # Skip string / char literal — a `]` or `[` inside a
+                # quoted attribute argument (`[Description("has ] in
+                # it")]`) is content, not a bracket. Backslash escapes
+                # are honored so `"\""` doesn't end the literal early.
+                quote = ch
+                i += 1
+                while i < len(s):
+                    if s[i] == "\\":
+                        i += 2
+                        continue
+                    if s[i] == quote:
+                        break
+                    i += 1
+            elif ch == "[":
                 depth += 1
-            elif s[i] == "]":
+            elif ch == "]":
                 depth -= 1
                 if depth == 0:
                     i += 1
@@ -393,7 +424,10 @@ def _base_types(type_node: Node, src: bytes) -> list[str]:
     return out
 
 
-def _member_name(node: Node, src: bytes) -> Optional[str]:
+def _member_names(node: Node, src: bytes) -> list[str]:
+    """Names a member node declares — one for most members, one per
+    ``variable_declarator`` for (event-)field declarations, where
+    ``int x, y, z;`` declares three fields in one statement."""
     kind = node.type
     if kind in (
         "method_declaration",
@@ -402,30 +436,37 @@ def _member_name(node: Node, src: bytes) -> Optional[str]:
         "delegate_declaration",
         "indexer_declaration",
     ):
-        return _field_text(node, "name", src)
+        name = _field_text(node, "name", src)
+        return [name] if name else []
     if kind in ("constructor_declaration", "destructor_declaration"):
-        return _field_text(node, "name", src)
+        name = _field_text(node, "name", src)
+        return [name] if name else []
     if kind in ("event_field_declaration", "field_declaration"):
         vd = next((c for c in node.children if c.type == "variable_declaration"), None)
         if vd is not None:
-            decl = next((c for c in vd.named_children if c.type == "variable_declarator"), None)
-            if decl is not None:
-                return _field_text(decl, "name", src)
+            return [
+                name
+                for c in vd.named_children
+                if c.type == "variable_declarator"
+                and (name := _field_text(c, "name", src))
+            ]
+        return []
     if kind == "enum_member_declaration":
-        return _field_text(node, "name", src)
+        name = _field_text(node, "name", src)
+        return [name] if name else []
     if kind == "operator_declaration":
         # tree-sitter exposes the operator token via the `operator` field
         op_tok = node.child_by_field_name("operator")
         if op_tok is not None:
-            return "operator" + _text(op_tok, src)
-        return "operator"
+            return ["operator" + _text(op_tok, src)]
+        return ["operator"]
     if kind == "conversion_operator_declaration":
         # `implicit operator decimal(Money m)` → name by target type.
         type_node = node.child_by_field_name("type")
         if type_node is not None:
-            return "operator_" + _text(type_node, src)
-        return "operator"
-    return None
+            return ["operator_" + _text(type_node, src)]
+        return ["operator"]
+    return []
 
 
 def _text(node: Node, src: bytes) -> str:

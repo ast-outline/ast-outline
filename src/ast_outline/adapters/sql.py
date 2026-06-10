@@ -140,6 +140,9 @@ class SqlAdapter:
     # a single keyword + identifier, so the keyword-strip shape doesn't
     # apply.
     definition_keywords = frozenset()
+    comment_line_prefixes = ('--',)
+    import_line_prefixes = ()
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -960,8 +963,11 @@ def _scan_unparsed_constructs(
     surfaced construct. The FUNCTION fallback additionally treats
     AST-emitted declaration ranges as skip zones — without this, every
     cleanly-parsed function would be re-extracted by the regex pass.
-    We re-sort once at the end rather than maintaining sorted order
-    through inserts.
+    Inserts use ``bisect.insort`` to keep ``skip_ranges`` sorted at all
+    times — ``_in_any_range`` binary-searches it, and a plain ``append``
+    from an earlier loop (e.g. a PROCEDURE late in the file) would leave
+    the list unsorted for later loops, letting the FUNCTION fallback
+    extract fake declarations from inside block comments.
     """
     # Snapshot AST-emitted declaration byte ranges so the FUNCTION
     # fallback skips them. Other fallback patterns don't need this:
@@ -974,19 +980,19 @@ def _scan_unparsed_constructs(
         if _in_any_range(m.start(), skip_ranges):
             continue
         decls.append(_procedure_decl_from_match(src, m, line_starts))
-        skip_ranges.append((m.start(), m.end()))
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
     for m in _DOMAIN_RE.finditer(src):
         if _in_any_range(m.start(), skip_ranges):
             continue
         decls.append(_domain_decl_from_match(src, m, line_starts))
-        skip_ranges.append((m.start(), m.end()))
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
     for m in _PARTITION_TABLE_RE.finditer(src):
         if _in_any_range(m.start(), skip_ranges):
             continue
         decls.append(_partition_table_decl_from_match(src, m, line_starts))
-        skip_ranges.append((m.start(), m.end()))
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
     for m in _FUNCTION_FALLBACK_RE.finditer(src):
         # Two-stage gating for FUNCTION: skip if inside a comment /
@@ -998,21 +1004,19 @@ def _scan_unparsed_constructs(
         if _in_any_range(m.start(), ast_decl_ranges):
             continue
         decls.append(_function_fallback_decl_from_match(src, m, line_starts))
-        skip_ranges.append((m.start(), m.end()))
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
     for m in _LOAD_RE.finditer(src):
         if _in_any_range(m.start(), skip_ranges):
             continue
         imports.append(_collapse_ws(_text_of_match(src, m)))
-        skip_ranges.append((m.start(), m.end()))
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
     for m in _IFS_RE.finditer(src):
         if _in_any_range(m.start(), skip_ranges):
             continue
         imports.append(_collapse_ws(_text_of_match(src, m)))
-        skip_ranges.append((m.start(), m.end()))
-
-    skip_ranges.sort()
+        bisect.insort(skip_ranges, (m.start(), m.end()))
 
 
 def _text_of_match(src: bytes, match: "re.Match[bytes]") -> str:

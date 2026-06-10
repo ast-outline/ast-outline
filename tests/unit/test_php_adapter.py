@@ -1004,3 +1004,25 @@ def test_union_and_intersection_types_in_promoted_property(tmp_path):
     items = _find(cls.children, name="items")
     assert cache is not None and "Cache|Redis" in cache.signature
     assert items is not None and "iterable&\\Countable" in items.signature
+
+
+def test_promoted_property_doc_start_byte_points_at_parameter(tmp_path):
+    """Promoted ctor properties left `doc_start_byte` at the dataclass
+    default 0 — `show` survived via the `or` fallback, but the JSON
+    export carries the field verbatim, handing consumers a garbage
+    offset. It must equal the parameter's own start."""
+    p = tmp_path / "a.php"
+    p.write_text(
+        "<?php\nclass Point {\n"
+        "    public function __construct(public int $x, private int $y) {}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    r = PhpAdapter().parse(p)
+    cls = r.declarations[0]
+    fields = [c for c in cls.children if c.kind == "field"]
+    assert fields, "promoted properties missing"
+    for f in fields:
+        assert f.doc_start_byte == f.start_byte > 0, (
+            f.name, f.doc_start_byte, f.start_byte
+        )

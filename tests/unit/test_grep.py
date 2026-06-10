@@ -1886,9 +1886,9 @@ def test_cli_invalid_regex_after_auto_promote_yields_note_not_traceback(
 # than asserting weakly.
 #
 # The classifier lives in ``src/ast_outline/grep.py``:
-#   - ``_COMMENT_PREFIXES_BY_LANG`` — comment markers
-#   - ``_IMPORT_PREFIXES_BY_LANG`` — import-line prefixes
-#   - ``_classify_match`` — per-line dispatch
+#   - ``_classify_match`` — per-line dispatch; comment / import line
+#     prefixes come from each adapter's ``comment_line_prefixes`` /
+#     ``import_line_prefixes`` attributes
 #   - ``_next_call_paren_after`` — call vs ref (handles generics,
 #     turbofish, optional chain, non-null assertion)
 
@@ -3570,6 +3570,31 @@ def test_every_adapter_declares_definition_keywords() -> None:
         assert all(isinstance(k, str) and k for k in kws)
 
 
+def test_every_adapter_declares_lexical_and_render_traits() -> None:
+    """Contract guard for the adapter-owned per-language facts that
+    used to live in central tables: every registered adapter must
+    declare ``comment_line_prefixes`` / ``import_line_prefixes``
+    (tuples of strings; empty allowed) and a ``render_family`` from
+    the closed set core's renderers branch on. Catches a new adapter
+    that forgets them before grep / digest silently misbehave for
+    that language."""
+    from ast_outline.adapters import ADAPTERS
+
+    valid_families = {"code", "markdown", "yaml", "css", "html"}
+    for adapter in ADAPTERS:
+        name = type(adapter).__name__
+        for attr in ("comment_line_prefixes", "import_line_prefixes"):
+            value = getattr(adapter, attr)
+            assert isinstance(value, tuple), f"{name}.{attr} must be a tuple"
+            assert all(isinstance(s, str) and s for s in value), (
+                f"{name}.{attr} entries must be non-empty strings"
+            )
+        family = adapter.render_family
+        assert family in valid_families, (
+            f"{name}.render_family {family!r} not in {sorted(valid_families)}"
+        )
+
+
 def test_cli_did_you_mean_path_returns_exit_zero(tmp_path: Path) -> None:
     """The did-you-mean path does extra work (it parses the scope to
     gather candidate names) — that work must never break the CLI exit-0
@@ -3584,3 +3609,109 @@ def test_cli_did_you_mean_path_returns_exit_zero(tmp_path: Path) -> None:
         rc = main(["grep", "MissSortPiles", str(tmp_path)])
     assert rc == 0
     assert "did you mean" in buf.getvalue()
+
+
+def test_grep_rust_lifetime_quote_does_not_open_string(tmp_path: Path) -> None:
+    """Rust lifetimes (``'a``, ``'static``) are UNPAIRED single quotes —
+    counting them as string delimiters flips the in-string state for the
+    rest of the line, so every match after ``&'a`` on a signature line
+    silently classified as ``[string]`` and vanished under the default
+    noise filter. Both ``str`` occurrences on the lifetime-carrying line
+    must stay visible."""
+    src = tmp_path / "lt.rs"
+    src.write_text(
+        "pub fn first_word<'a>(s: &'a str) -> &'a str {\n"
+        "    s\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    results, _, _ = grep("str", [src])
+    assert results, "expected visible matches on the lifetime line"
+    line1 = [m for m in results[0].matches if m.line == 1]
+    assert len(line1) == 2, (
+        f"both `str` matches after lifetimes must survive, got {line1}"
+    )
+    assert all(m.kind != KIND_STRING for m in line1)
+    assert results[0].filtered_count == 0
+
+
+def test_grep_rust_char_literal_still_classifies_string(tmp_path: Path) -> None:
+    """The lifetime exception must NOT swallow real Rust char literals:
+    ``'x'`` closes within two chars, so a match inside it still counts
+    as ``[string]`` and is noise-filtered by default."""
+    src = tmp_path / "ch.rs"
+    src.write_text(
+        "fn f() {\n"
+        "    let c = 'x'; let y = 1;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    results, _, _ = grep("x", [src], include_noise=True)
+    kinds = [m.kind for m in results[0].matches]
+    assert KIND_STRING in kinds, (
+        f"char-literal content must classify as string, got {kinds}"
+    )
+
+
+def test_grep_word_match_finds_cyrillic_identifier(tmp_path: Path) -> None:
+    """``-w`` wraps the pattern in ``\\b`` boundaries. In bytes mode
+    ``\\b``/``\\w`` are ASCII-only: every UTF-8 continuation byte is a
+    non-word byte, no boundary is ever found, and a whole-word search
+    for a Cyrillic identifier silently returned "no matches". The slow
+    path must match against the decoded str so ``\\b`` is
+    Unicode-aware."""
+    src = tmp_path / "uni.py"
+    src.write_text(
+        "привет = 1\n"
+        "def привет_мир():\n"
+        "    return привет\n",
+        encoding="utf-8",
+    )
+    results, _, _ = grep("привет", [src], word_match=True)
+    assert results, "whole-word Cyrillic search must find matches"
+    lines = sorted(m.line for m in results[0].matches)
+    # L1 and L3 are standalone words; привет_мир on L2 must NOT match
+    # (underscore is a word char — no boundary inside the identifier).
+    assert lines == [1, 3], f"expected word matches on L1+L3, got {lines}"
+
+
+def test_grep_case_insensitive_folds_cyrillic(tmp_path: Path) -> None:
+    """``-i`` in bytes mode can't case-fold non-ASCII — ``ПРИВЕТ``
+    never matched ``привет``. str-mode IGNORECASE folds Unicode."""
+    src = tmp_path / "uni.py"
+    src.write_text("привет = 1\n", encoding="utf-8")
+    results, _, _ = grep("ПРИВЕТ", [src], case_insensitive=True)
+    assert results and results[0].matches, (
+        "case-insensitive Cyrillic search must find the lowercase form"
+    )
+
+
+def test_grep_regex_offsets_exact_after_multibyte_prefix(tmp_path: Path) -> None:
+    """The str-mode slow path converts codepoint spans back to byte
+    offsets. A match AFTER a multi-byte prefix must land on the right
+    line/column — an offset skew would shift every downstream
+    annotation (line, column, enclosing scope)."""
+    src = tmp_path / "uni.py"
+    src.write_text(
+        "# привет мир\n"
+        "def target():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    results, _, _ = grep("target", [src], is_regex=True)
+    m = results[0].matches[0]
+    assert (m.line, m.kind) == (2, KIND_DEF), (m.line, m.kind)
+    assert m.column == 5
+
+
+def test_grep_regex_offsets_survive_invalid_utf8(tmp_path: Path) -> None:
+    """Files with invalid UTF-8 must not skew byte offsets in the
+    str-mode slow path: ``surrogateescape`` round-trips each bad byte
+    1:1 (``replace`` would substitute a 3-byte replacement char and
+    shift every following match)."""
+    src = tmp_path / "bad.py"
+    src.write_bytes(b"x = b'\xff\xfe'\ntarget = 2\n")
+    results, _, _ = grep("target", [src], is_regex=True)
+    assert results and results[0].matches, "match after invalid bytes lost"
+    m = results[0].matches[0]
+    assert (m.line, m.column) == (2, 1), (m.line, m.column)

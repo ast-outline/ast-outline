@@ -151,6 +151,22 @@ def test_digest_groups_by_directory(fixtures_dir):
     assert "python/" in out
 
 
+def test_digest_single_file_dir_header_is_relative(csharp_dir):
+    """A single-file batch must NOT print an absolute directory header.
+
+    The common root is computed over each file's PARENT: commonpath over
+    the file paths themselves would return the file itself for a one-file
+    batch, `relative_to(root)` would fail, and the directory header would
+    silently fall back to the absolute path — inconsistent with the `./`
+    header the same file gets when batched with a sibling."""
+    r = CSharpAdapter().parse(csharp_dir / "unity_behaviour.cs")
+    out = render_digest([r], DigestOptions())
+    dir_line = next(
+        line for line in out.splitlines() if line.endswith("/")
+    )
+    assert dir_line == "./", out
+
+
 def test_digest_lists_type_with_member_tokens(csharp_dir):
     r = CSharpAdapter().parse(csharp_dir / "unity_behaviour.cs")
     out = render_digest([r], DigestOptions())
@@ -203,3 +219,44 @@ def test_digest_handles_empty_file(tmp_path):
     r = PythonAdapter().parse(empty)
     out = render_digest([r], DigestOptions())
     assert "# no declarations" in out
+
+
+def test_docs_imply_doc_start_byte_across_all_fixtures(fixtures_dir):
+    """Cross-adapter invariant behind `_search_walk`'s doc-at-byte-0
+    handling: a declaration carrying leading docs (`docs` non-empty,
+    `docs_inside=False`) must have `doc_start_byte` set — either a real
+    non-zero offset, or 0 only when the doc text genuinely opens the
+    file. An adapter that fills `docs` but forgets `doc_start_byte`
+    would make `show` slice from byte 0 for that declaration."""
+    from ast_outline.adapters import get_adapter_for
+
+    violations: list[tuple[str, str, str]] = []
+    for f in sorted(fixtures_dir.rglob("*")):
+        if not f.is_file():
+            continue
+        adapter = get_adapter_for(f)
+        if adapter is None:
+            continue
+        try:
+            r = adapter.parse(f)
+        except Exception:
+            continue
+
+        def walk(decls):
+            for d in decls:
+                if (
+                    d.docs
+                    and not d.docs_inside
+                    and d.doc_start_byte == 0
+                    and d.start_byte > 0
+                ):
+                    head = d.docs[0].strip()[:20].encode()
+                    file_opens_with_doc = bool(head) and r.source[
+                        : len(head) + 5
+                    ].lstrip().startswith(head)
+                    if not file_opens_with_doc:
+                        violations.append((r.language, f.name, d.name))
+                walk(d.children)
+
+        walk(r.declarations)
+    assert not violations, violations

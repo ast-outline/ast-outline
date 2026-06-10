@@ -265,3 +265,19 @@ def test_leading_comment_attached_as_doc(css_dir):
     assert any("Design tokens" in line for line in rule.docs)
     # doc_start_byte should point to the comment, before the rule itself.
     assert rule.doc_start_byte < rule.start_byte
+
+
+def test_compound_selectors_expose_every_part(tmp_path):
+    """`#header.nav` / `.a.b` / `div.container` nest the qualifying
+    selector INSIDE the outer class_selector — the old extractor kept
+    only the final class and dropped `#header` / `.a` / `div` from
+    `match_names`, making the rule unfindable by its other parts."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.css"
+    p.write_text(
+        ".a.b {}\n#header.nav {}\ndiv.container {}\n", encoding="utf-8"
+    )
+    r = CssAdapter().parse(p)
+    for query in (".a", ".b", ".a.b", "#header", ".nav", "#header.nav",
+                  "div", ".container", "div.container"):
+        assert find_symbols(r, query), f"{query} must resolve"

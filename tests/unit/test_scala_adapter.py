@@ -585,3 +585,22 @@ def test_digest_includes_scala_types(scala_dir):
     # finds it uniformly with Java records / Kotlin data classes),
     # but digest restores the source-true `case class` keyword.
     assert "case class" in text
+
+
+def test_case_class_pattern_binding_names_bound_identifier(tmp_path):
+    """`val List(h, t) = myList` — the binding is the FIRST named child
+    (a case_class_pattern); the trailing `identifier` is the RHS. The
+    old scan walked past the unrecognised pattern and named the field
+    after the RHS variable (`myList`)."""
+    p = tmp_path / "a.scala"
+    p.write_text(
+        "object O {\n  val List(h, t) = myList\n  val (a, b) = pair\n}\n",
+        encoding="utf-8",
+    )
+    r = ScalaAdapter().parse(p)
+    obj = r.declarations[0]
+    names = [c.name for c in obj.children]
+    assert "myList" not in names, names
+    assert "pair" not in names, names
+    assert "h" in names, names
+    assert "a" in names, names

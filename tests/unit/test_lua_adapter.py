@@ -362,6 +362,18 @@ def test_assignment_with_function_value_is_function_kind(lua_dir):
 
 
 # --- Grep classifier (Lua-specific) ---------------------------------------
+#
+# The Lua quirks are adapter-declared attributes (`name_chain_separators`,
+# `call_sugar_openers`) consumed by grep's call-vs-ref walker. The tests
+# pass the LuaAdapter's own declarations so they cover both the walker
+# logic and the adapter's attribute values.
+
+
+def _lua_walker_kwargs() -> dict:
+    return dict(
+        name_chain_separators=LuaAdapter.name_chain_separators,
+        call_sugar_openers=LuaAdapter.call_sugar_openers,
+    )
 
 
 def test_lua_colon_method_call_classifies_as_call():
@@ -369,60 +381,59 @@ def test_lua_colon_method_call_classifies_as_call():
     promotes the receiver match to KIND_CALL, matching the v0.8.12
     bias-toward-call policy."""
     from ast_outline.grep import _next_call_paren_after
-    assert _next_call_paren_after("obj:method(x)", 3, language="lua")
+    assert _next_call_paren_after("obj:method(x)", 3, **_lua_walker_kwargs())
 
 
 def test_lua_dot_chain_call_classifies_as_call():
     """``a.b.c.d(x)`` matched on ``a`` — deep dot chain ending in
     a call should classify as KIND_CALL under the Lua walker."""
     from ast_outline.grep import _next_call_paren_after
-    assert _next_call_paren_after("a.b.c.d(x)", 1, language="lua")
+    assert _next_call_paren_after("a.b.c.d(x)", 1, **_lua_walker_kwargs())
 
 
 def test_lua_dot_chain_without_call_is_ref():
     """``obj.field`` matched on ``obj`` — no trailing call shape,
     so the chain skipping reaches end-of-line and returns False."""
     from ast_outline.grep import _next_call_paren_after
-    assert not _next_call_paren_after("obj.field", 3, language="lua")
+    assert not _next_call_paren_after("obj.field", 3, **_lua_walker_kwargs())
 
 
 def test_lua_string_sugar_call():
     """``f"hello"`` — bare-string-arg sugar call, Lua-only."""
     from ast_outline.grep import _next_call_paren_after
-    assert _next_call_paren_after('f"hello"', 1, language="lua")
+    assert _next_call_paren_after('f"hello"', 1, **_lua_walker_kwargs())
 
 
 def test_lua_table_sugar_call():
     """``f{1, 2}`` — table-arg sugar call, Lua-only."""
     from ast_outline.grep import _next_call_paren_after
-    assert _next_call_paren_after("f{1, 2}", 1, language="lua")
+    assert _next_call_paren_after("f{1, 2}", 1, **_lua_walker_kwargs())
 
 
 def test_lua_long_string_sugar_call_double_bracket():
     """``f[[long string]]`` — long-bracket-string sugar call. Must
     win over the bare ``[`` subscript case below."""
     from ast_outline.grep import _next_call_paren_after
-    assert _next_call_paren_after("f[[long]]", 1, language="lua")
+    assert _next_call_paren_after("f[[long]]", 1, **_lua_walker_kwargs())
 
 
 def test_lua_subscript_is_not_call():
     """``f[1]`` — single ``[`` is a table subscript, NOT a call. The
-    Lua-specific sugar branch must require ``[[`` for the long-string
-    case and leave bare ``[`` alone."""
+    sugar openers deliberately list ``[[`` but not bare ``[``."""
     from ast_outline.grep import _next_call_paren_after
-    assert not _next_call_paren_after("f[1]", 1, language="lua")
+    assert not _next_call_paren_after("f[1]", 1, **_lua_walker_kwargs())
 
 
 def test_lua_classifier_does_not_leak_to_other_languages():
-    """The same shapes that classify as call under ``language="lua"``
-    must NOT classify as call under other languages — chain
-    skipping and sugar calls are Lua-specific."""
+    """The same shapes that classify as call with the Lua attributes
+    must NOT classify as call without them (the default for every
+    other adapter) — chain skipping and sugar calls are Lua-specific."""
     from ast_outline.grep import _next_call_paren_after
     # ``f"x"`` in TypeScript is not a call (it would be invalid syntax
     # or a tagged-template; we don't promote it to call).
-    assert not _next_call_paren_after('f"x"', 1, language="typescript")
+    assert not _next_call_paren_after('f"x"', 1)
     # ``f{x}`` in Rust is a struct literal, not a call.
-    assert not _next_call_paren_after("f{x}", 1, language="rust")
+    assert not _next_call_paren_after("f{x}", 1)
     # ``obj.field`` in TS / Python / Rust without a trailing ``(`` is
     # still a ref — chain skipping is Lua-only.
-    assert not _next_call_paren_after("obj.method(x)", 3, language="typescript")
+    assert not _next_call_paren_after("obj.method(x)", 3)

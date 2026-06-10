@@ -7,6 +7,7 @@ outputs (outline, digest) and runs symbol search (find_symbols).
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -329,6 +330,49 @@ def filter_declarations(
     return out
 
 
+# --- Per-language rendering traits ----------------------------------------
+#
+# Renderers branch on the language's *render family*, not on language
+# names: which family a language belongs to is a per-language fact and
+# lives on its adapter (``LanguageAdapter.render_family``), so adding a
+# new language never requires touching a branch here. The lookups are
+# lazy (function-local import) because adapters import this module —
+# a top-level ``from .adapters import …`` would be a circular import.
+
+
+@lru_cache(maxsize=None)
+def _adapter_for_language(language: str):
+    """The registered adapter instance for a ``ParseResult.language``,
+    or ``None`` for an unknown language (hand-built results in tests)."""
+    from .adapters import ADAPTERS
+
+    for a in ADAPTERS:
+        if a.language_name == language:
+            return a
+    return None
+
+
+def _render_family(language: str) -> str:
+    """The digest / header rendering family the language's adapter
+    declares — ``"code"`` when the language is unknown."""
+    a = _adapter_for_language(language)
+    return getattr(a, "render_family", "code") if a is not None else "code"
+
+
+def _file_format_suffix(result: ParseResult) -> str:
+    """Format-detect annotation for the file header (``— OpenAPI 3.0.0,
+    23 paths``), appended after the closing paren with an em-dash so the
+    eye separates the "what is this file" signal from the size/counter
+    parens. Produced by the adapter's optional ``file_format_hint`` hook
+    (currently only YAML declares one); empty for everything else."""
+    adapter = _adapter_for_language(result.language)
+    hint_fn = getattr(adapter, "file_format_hint", None)
+    if hint_fn is None:
+        return ""
+    hint = hint_fn(result.declarations)
+    return f" — {hint}" if hint else ""
+
+
 # --- Renderers ------------------------------------------------------------
 
 
@@ -457,15 +501,16 @@ def _format_file_header(
     this is an order-of-magnitude figure.
     """
     counts = _collect_counts(result.declarations)
+    family = _render_family(result.language)
     parts = [
         f"{result.line_count} lines",
         f"~{_estimate_tokens(result.source):,} tokens",
     ]
     if not include_counters:
         order: list[tuple[str, str]] = []
-    elif result.language == "markdown":
+    elif family == "markdown":
         order = [("headings", "headings"), ("code_blocks", "code blocks")]
-    elif result.language == "yaml":
+    elif family == "yaml":
         # YAML files report their document count when multi-doc — for
         # k8s manifests this is the primary "what's in here" signal.
         # Single-doc files skip the counter (`1 doc` would be noise).
@@ -473,7 +518,7 @@ def _format_file_header(
         if n_docs > 1:
             parts.append(f"{n_docs} docs")
         order = []
-    elif result.language == "html":
+    elif family == "html":
         order = [("elements", "elements")]
     else:
         order = [("types", "types"), ("methods", "methods"), ("fields", "fields")]
@@ -482,30 +527,7 @@ def _format_file_header(
         if n > 0:
             parts.append(f"{n} {label}")
 
-    # Format-detect annotation — appended after the closing paren with
-    # an em-dash so the eye visually separates the "what is this file"
-    # signal from the size/counter parens. Only fires for single-doc
-    # YAML where a clear format is detectable; multi-doc shows per-doc
-    # annotations in each `--- doc N of M` separator line instead.
-    suffix = ""
-    if result.language == "yaml":
-        suffix = _yaml_format_suffix(result.declarations)
-    return f"{prefix} ({', '.join(parts)}){suffix}"
-
-
-def _yaml_format_suffix(decls: list[Declaration]) -> str:
-    """Generate the `— OpenAPI 3.0.0, 23 paths` style annotation. Empty
-    string when no specific format is detected, or when the file is
-    multi-document (per-doc annotations live in the separator lines)."""
-    n_docs = sum(1 for d in decls if d.kind == KIND_YAML_DOC)
-    if n_docs > 1:
-        return ""
-    # Single-doc — detect on the top-level decls directly
-    from .adapters.yaml import _format_for_doc
-    hint = _format_for_doc(decls)
-    if hint:
-        return f" — {hint}"
-    return ""
+    return f"{prefix} ({', '.join(parts)}){_file_format_suffix(result)}"
 
 
 def _estimate_tokens(source: bytes) -> int:
@@ -1116,11 +1138,15 @@ def render_digest(results: list[ParseResult], opts: DigestOptions, root: Optiona
     """
     if not results:
         return "# no files\n"
-    # Common root for relative paths
+    # Common root for relative paths. Computed over each path's PARENT
+    # (mirroring `json_output._common_root`) — commonpath over the file
+    # paths themselves would return the file itself for a single-file
+    # batch, every directory's `relative_to(root)` would then fail, and
+    # the headers would silently fall back to absolute paths.
     if root is None:
         try:
             import os
-            root = Path(os.path.commonpath([str(r.path) for r in results]))
+            root = Path(os.path.commonpath([str(r.path.parent) for r in results]))
         except ValueError:
             root = results[0].path.parent
 
@@ -1252,7 +1278,8 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
     if label == "[huge]":
         return with_imports(prefix)
 
-    if result.language == "markdown":
+    family = _render_family(result.language)
+    if family == "markdown":
         # Top-level headings only (children are nested H2+ — not
         # listed here to keep the line tight).
         headlines = [
@@ -1260,7 +1287,7 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
             for d in result.declarations
             if d.kind == KIND_HEADING
         ]
-    elif result.language == "yaml":
+    elif family == "yaml":
         # Single-doc YAML: top-level keys. Multi-doc: doc separator
         # captions (e.g. `--- doc 1 of 3 — ConfigMap prod/api-config`)
         # — the signature carries the descriptive label, name alone is
@@ -1273,10 +1300,10 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
             headlines = [
                 d.name for d in result.declarations if d.kind == KIND_YAML_KEY
             ]
-    elif result.language in ("css", "scss"):
+    elif family == "css":
         flat = _flatten_css(result.declarations, opts)
         headlines = [d.name for d in flat]
-    elif result.language == "html":
+    elif family == "html":
         # Skip the outer html → head/body chrome (always one of each) and
         # surface the landmark elements directly beneath them. Names
         # format is "what's on this page at a glance"; ``html / head /
@@ -1361,7 +1388,8 @@ def _digest_one(
         return lines
 
     # Markdown files digest as a hierarchical TOC, not a type/member list.
-    if result.language == "markdown":
+    family = _render_family(result.language)
+    if family == "markdown":
         toc = _digest_markdown(result.declarations, opts, indent=4, depth=1, flags=flags)
         if not toc:
             if is_compact:
@@ -1376,7 +1404,7 @@ def _digest_one(
     # - per-doc separator lines (multi-doc: each `--- doc N of M — ...`)
     # No `[yaml_key]` / `[yaml_doc]` annotations — the tag would be
     # uniform-and-noisy for every entry.
-    if result.language == "yaml":
+    if family == "yaml":
         body = _digest_yaml(result.declarations, opts, flags=flags)
         if not body:
             if is_compact:
@@ -1394,7 +1422,7 @@ def _digest_one(
     # selectors; rendering as a flat token list mirrors how the file
     # actually reads. Outline still shows the full hierarchy for an
     # agent that needs structure.
-    if result.language in ("css", "scss"):
+    if family == "css":
         body = _digest_css(result.declarations, opts, flags=flags)
         if not body:
             if is_compact:
@@ -1410,7 +1438,7 @@ def _digest_one(
     # ``body`` count as "free" wrappers — they don't consume depth
     # budget, so a page rendered as ``html > body > main > section#hero``
     # still shows ``section#hero`` even though that's four levels deep.
-    if result.language == "html":
+    if family == "html":
         body = _digest_html(
             result.declarations, opts, indent=4, depth=1, flags=flags
         )
@@ -2169,7 +2197,18 @@ def _search_walk(
                 break
             cand_trail = trail + [cand] if cand else trail
             if cand and _trail_matches(cand_trail, parts, substring=substring):
-                start = d.doc_start_byte or d.start_byte
+                # ``doc_start_byte == 0`` is ambiguous: the dataclass
+                # default ("no leading doc") or a doc block genuinely
+                # starting at byte 0 (the file opens with the doc
+                # comment of its first declaration). Non-empty leading
+                # ``docs`` disambiguate: adapters that collect docs
+                # rendered before the signature also record where the
+                # doc slice starts, so a 0 alongside docs is the real
+                # offset and the slice must include the doc.
+                if d.doc_start_byte or (d.docs and not d.docs_inside):
+                    start = d.doc_start_byte
+                else:
+                    start = d.start_byte
                 end = d.end_byte
                 # Absolute names from `match_names` represent themselves
                 # as `qualified_name`; everything else is path-joined.

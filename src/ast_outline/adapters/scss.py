@@ -77,6 +77,9 @@ class ScssAdapter:
     # `@mixin` / `@function` lead with `@`, not a bare identifier — the
     # keyword-strip shape (`<kw> Identifier`) never applies.
     definition_keywords = frozenset()
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('@import ', '@use ', '@forward ')
+    render_family = "css"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

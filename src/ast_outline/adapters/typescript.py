@@ -117,6 +117,9 @@ class TypeScriptAdapter:
     definition_keywords = frozenset({
         "class", "interface", "type", "enum", "function", "namespace",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -305,7 +308,7 @@ def _node_to_decl(
                 if decl is not None:
                     decl.start_byte = node.start_byte
                     decl.start_line = node.start_point[0] + 1
-                    decl.doc_start_byte = _leading_doc_start_byte(node, src) or node.start_byte
+                    decl.doc_start_byte = _resolved_doc_start(node, src)
                     decl.docs = _collect_docs(node, src)
                     if export_decorators:
                         decl.attrs = export_decorators + decl.attrs
@@ -323,7 +326,9 @@ def _node_to_decl(
         return _enum_to_decl(node, src)
     if kind == "type_alias_declaration":
         return _type_alias_to_decl(node, src)
-    if kind == "function_declaration":
+    if kind in ("function_declaration", "generator_function_declaration"):
+        # `function* gen() {}` is a distinct node type — without this
+        # branch generator functions silently vanish from the outline.
         return _function_to_decl(node, src, inside_class=False)
 
     # `describe('...', () => {...})` / `it('...', () => {...})` and other
@@ -359,7 +364,15 @@ def _node_to_decl(
     # Inside an interface body
     if kind == "property_signature":
         return _property_signature_to_decl(node, src)
-    if kind in ("method_signature", "construct_signature", "call_signature"):
+    # `abstract_method_signature` lives in `abstract class` bodies —
+    # same shape as an interface method signature (name + params, no
+    # body); without it abstract members vanish from the outline.
+    if kind in (
+        "method_signature",
+        "construct_signature",
+        "call_signature",
+        "abstract_method_signature",
+    ):
         return _method_signature_to_decl(node, src)
     if kind == "index_signature":
         return None  # skip — rarely useful in an outline
@@ -383,6 +396,7 @@ _HANDLED_TOP_LEVEL = {
     "enum_declaration",
     "type_alias_declaration",
     "function_declaration",
+    "generator_function_declaration",
     "lexical_declaration",
     "variable_declaration",
 }
@@ -609,7 +623,7 @@ def _class_to_decl(node: Node, src: bytes) -> Declaration:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
         children=children,
     )
 
@@ -637,7 +651,7 @@ def _interface_to_decl(node: Node, src: bytes) -> Declaration:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
         children=children,
     )
 
@@ -662,7 +676,7 @@ def _enum_to_decl(node: Node, src: bytes) -> Declaration:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
         children=children,
     )
 
@@ -682,11 +696,13 @@ def _enum_member_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         kind=KIND_ENUM_MEMBER,
         name=name,
         signature=_collapse_ws(_text(node, src)),
+        docs=_collect_docs(node, src),
         visibility="public",
         start_line=node.start_point[0] + 1,
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -703,7 +719,7 @@ def _type_alias_to_decl(node: Node, src: bytes) -> Declaration:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -725,7 +741,7 @@ def _function_to_decl(node: Node, src: bytes, *, inside_class: bool) -> Declarat
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -756,7 +772,7 @@ def _method_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -777,7 +793,7 @@ def _method_signature_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -806,7 +822,7 @@ def _class_field_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -826,6 +842,7 @@ def _property_signature_to_decl(node: Node, src: bytes) -> Optional[Declaration]
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -866,9 +883,7 @@ def _lexical_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
             )
             if block is not None:
                 block.docs = docs
-                block.doc_start_byte = (
-                    _leading_doc_start_byte(node, src) or node.start_byte
-                )
+                block.doc_start_byte = _resolved_doc_start(node, src)
                 return block
 
     if value is not None and value.type in ("arrow_function", "function_expression", "function"):
@@ -883,7 +898,7 @@ def _lexical_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
             end_line=node.end_point[0] + 1,
             start_byte=node.start_byte,
             end_byte=node.end_byte,
-            doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+            doc_start_byte=_resolved_doc_start(node, src),
         )
 
     # Plain field. `_elided_text` drops any embedded function/method
@@ -902,7 +917,7 @@ def _lexical_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
-        doc_start_byte=_leading_doc_start_byte(node, src) or node.start_byte,
+        doc_start_byte=_resolved_doc_start(node, src),
     )
 
 
@@ -1174,6 +1189,16 @@ def _leading_doc_start_byte(node: Node, src: bytes) -> Optional[int]:
     if not nodes or _is_commented_out_code(nodes, src):
         return None
     return nodes[0].start_byte
+
+
+def _resolved_doc_start(node: Node, src: bytes) -> int:
+    """``doc_start_byte`` for a node: the leading doc block's start, or
+    the node's own start when there is none. Explicit ``is None`` check —
+    ``_leading_doc_start_byte(...) or node.start_byte`` would treat a doc
+    comment at byte 0 (the file opens with the JSDoc) as "no doc" and
+    slice past it."""
+    ds = _leading_doc_start_byte(node, src)
+    return node.start_byte if ds is None else ds
 
 
 # --- Misc helpers --------------------------------------------------------

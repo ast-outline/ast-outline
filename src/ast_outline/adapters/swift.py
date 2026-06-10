@@ -80,6 +80,9 @@ class SwiftAdapter:
     definition_keywords = frozenset({
         "class", "struct", "enum", "protocol", "func", "extension",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

@@ -7,6 +7,95 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.4.0] — 2026-06-10
+
+A bug-audit release: every change below was reproduced as incorrect
+behavior first and is pinned by a regression test (suite grew
+2085 → 2112). No CLI flags or JSON schema changed.
+
+### Fixed
+
+- **`grep -w` / `-i` now work for non-ASCII identifiers.** The
+  multi-pattern/regex matcher ran on raw bytes, where `\b` and
+  `IGNORECASE` are ASCII-only — `grep -w привет` returned "no matches"
+  even when the identifier was right there, and `-i` couldn't case-fold
+  Cyrillic at all. The slow path now matches on the decoded text and
+  converts spans back to byte offsets exactly (invalid UTF-8 round-trips
+  via `surrogateescape`, so offsets never skew).
+- **`grep` on Rust: matches after a lifetime on the same line are no
+  longer swallowed as `[string]`.** The quote-counting heuristic treated
+  the unpaired `'` of `'a` / `'static` as a string delimiter, flipping
+  the in-string state for the rest of the line — on a signature like
+  `pub fn first_word<'a>(s: &'a str) -> &'a str` half the matches
+  silently vanished under the default noise filter. Char literals
+  (`'x'`, `'\n'`) still classify as strings.
+- **A doc comment at byte 0 of the file is now included in `show`.**
+  Every adapter (and the core search walker) used the
+  `doc_start_byte or start_byte` pattern, which reads a doc block
+  starting at offset 0 — a file that opens with `///` or `/** ... */`
+  — as "no doc" and sliced past it. A fixture-wide invariant test now
+  guards the contract.
+- **C#: multi-declarator fields and events emit every name.**
+  `int x, y, z;` produced only field `x`; `y` and `z` were absent from
+  the outline, digest, and search. Same for
+  `event EventHandler A, B;`.
+- **C#: a `]` inside a quoted attribute argument no longer truncates
+  the signature.** `[Description("has ] in it")] public class Foo`
+  rendered as `in it")] public class Foo`; the attribute stripper is
+  now string-aware.
+- **TypeScript: abstract members and generator functions are no longer
+  dropped.** `abstract area(): number;` inside an `abstract class` and
+  `function* gen() {}` (bare, exported, or async) produced no
+  declaration at all. Interface properties and enum members now also
+  carry their JSDoc in the `show` slice.
+- **Go: interface embeddings and union constraints are complete.**
+  Package-qualified embeddings (`io.Reader`) were dropped from `bases`
+  entirely, and a union constraint (`int | int32 | int64`) kept only
+  its first member. The package's line range also no longer clips
+  short when a function sits between a struct and its methods.
+- **C++: `template<…> class Foo { … };` keeps its trailing `;` in
+  `show`** — the declaration now spans the outer template node on both
+  ends.
+- **SQL: no more phantom functions extracted from block comments.**
+  The regex-fallback scanner kept its skip ranges unsorted while
+  binary-searching them, so a `CREATE FUNCTION` mentioned inside
+  `/* ... */` could surface as a real declaration.
+- **CSS/SCSS: compound selectors are fully findable.** `#header.nav` /
+  `.a.b` / `div.container` exposed only the final class in
+  `match_names` — searching `#header` found nothing. SCSS `&.active`
+  lost its dot on resolution (`.cardactive` instead of `.card.active`).
+  BEM `&__header` resolution is unchanged.
+- **HTML: heading text previews read in source order.**
+  `<h2><a href="#x">Section</a> title</h2>` rendered as
+  `h2: titleSection`; now `h2: Section title`, with word boundaries
+  preserved across inline elements.
+- **Scala: pattern bindings no longer take the RHS identifier as the
+  field name.** `val List(h, t) = myList` produced a field named
+  `myList`; it now binds `h` (first bound identifier of the pattern),
+  and `protected` / `lazy` / annotation prefixes no longer confuse the
+  name extraction.
+- **`digest` of a single file prints a relative directory header**
+  (`./`) instead of the absolute path — the common root is now computed
+  over parent directories, matching the JSON serializer.
+- **Ruby / PHP: `doc_start_byte` is populated for macro-generated
+  fields** (`attr_*`, Rails associations, `alias_method`) **and PHP
+  promoted constructor properties** — the JSON export no longer carries
+  a garbage `0` offset for them.
+
+### Changed
+
+- **Per-language knowledge now lives on the adapters, not in central
+  tables.** `grep`'s comment / import line prefixes, Rust's
+  lifetime-quote rule, and Lua's sugar-call / method-chain shapes are
+  declared by each adapter (`comment_line_prefixes`,
+  `import_line_prefixes`, and optional quirk attributes); the digest
+  and file-header renderers branch on an adapter-declared
+  `render_family` instead of language names, and the YAML format
+  annotation (`— OpenAPI 3.0.0, 23 paths`) comes from an adapter hook.
+  Output is byte-identical — this is an internal contract so a new
+  language adapter never requires editing `core.py` / `grep.py`. A
+  contract test enforces the new attributes on every adapter.
+
 ## [1.3.8] — 2026-06-06
 
 ### Fixed

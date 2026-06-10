@@ -88,6 +88,9 @@ class GoAdapter:
     display_name = "Go"
     extensions = {".go"}
     definition_keywords = frozenset({"func", "type"})
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('import ',)
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -214,10 +217,20 @@ def _walk_top(node: Node, src: bytes, out: list[Declaration]) -> None:
             sink.append(method)
 
     # Stretch the namespace's line range to cover everything it absorbed.
+    # Max over ALL children, not just the last one: pass 2 extends a
+    # receiver type's range to its regrouped methods, so the child that
+    # ends furthest in the source isn't necessarily the last list entry
+    # (a plain function declared between a struct and its methods would
+    # otherwise clip the namespace short).
     if package_ns is not None and package_ns.children:
-        last = package_ns.children[-1]
-        package_ns.end_line = max(package_ns.end_line, last.end_line)
-        package_ns.end_byte = max(package_ns.end_byte, last.end_byte)
+        package_ns.end_line = max(
+            package_ns.end_line,
+            max(c.end_line for c in package_ns.children),
+        )
+        package_ns.end_byte = max(
+            package_ns.end_byte,
+            max(c.end_byte for c in package_ns.children),
+        )
 
 
 def _package_to_decl(node: Node, src: bytes) -> Declaration:
@@ -465,13 +478,17 @@ def _interface_members_and_bases(
                 )
             )
         elif c.type == "type_elem":
-            # `type_elem` wraps a `type_identifier` (or a union of types
-            # in newer constraint syntax). For the `bases` list we only
-            # care about plain identifiers.
+            # `type_elem` wraps a `type_identifier`, a `qualified_type`
+            # (embedded `io.Reader`), or a union of types in constraint
+            # syntax (`int | float64` — several children). Collect every
+            # named entry: stopping at the first one dropped the rest of
+            # a union, and skipping `qualified_type` lost every
+            # package-qualified embedding.
             for cc in c.named_children:
                 if cc.type == "type_identifier":
                     bases.append(_text(cc, src))
-                    break
+                elif cc.type == "qualified_type":
+                    bases.append(_collapse_ws(_text(cc, src)))
     return members, bases
 
 

@@ -654,3 +654,28 @@ def test_inline_module_script_not_an_import(tmp_path):
     result = HtmlAdapter().parse(p)
     # Inline module scripts (no src) are content, not imports.
     assert not any(s.startswith("script") for s in result.imports)
+
+
+def test_heading_text_preserves_source_order_and_spacing(tmp_path):
+    """Text inside inline children must land in SOURCE order with word
+    boundaries kept: the old LIFO-stack walk emitted a heading's direct
+    text before its inline elements' inner text
+    (``<h2><a>Section</a> title</h2>`` → ``titleSection``), and a
+    butt-join fused words across element boundaries."""
+    p = tmp_path / "a.html"
+    p.write_text(
+        "<html><body>\n"
+        '<h2><a href="#x">Section</a> title</h2>\n'
+        "<h1><strong>Hello</strong> World</h1>\n"
+        "</body></html>\n",
+        encoding="utf-8",
+    )
+    r = HtmlAdapter().parse(p)
+    sigs = []
+    def walk(ds):
+        for d in ds:
+            sigs.append(d.signature)
+            walk(d.children)
+    walk(r.declarations)
+    assert "h2: Section title" in sigs, sigs
+    assert "h1: Hello World" in sigs, sigs

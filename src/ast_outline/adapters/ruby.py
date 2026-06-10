@@ -274,6 +274,9 @@ class RubyAdapter:
     display_name = "Ruby"
     extensions = {".rb", ".rake", ".gemspec", ".ru"}
     definition_keywords = frozenset({"class", "module", "def"})
+    comment_line_prefixes = ('#',)
+    import_line_prefixes = ('require ', 'require_relative ', 'load ')
+    render_family = "code"
     # Convention-named extensionless files. Matched by exact basename
     # at adapter selection. Restricted to the universally-known names
     # — adding more would shift the adapter into "guess what's Ruby"
@@ -943,6 +946,7 @@ def _handle_class_call(
                 node, n, marker, current_visibility, static=False,
             )
             field.docs = list(pending_docs)
+            field.doc_start_byte = _doc_start_byte(field, pending_docs, node, src)
             out.append(field)
         return "attr"
 
@@ -954,6 +958,7 @@ def _handle_class_call(
                 node, n, marker, current_visibility, static=False,
             )
             field.docs = list(pending_docs)
+            field.doc_start_byte = _doc_start_byte(field, pending_docs, node, src)
             out.append(field)
         return "rails"
 
@@ -974,6 +979,7 @@ def _handle_class_call(
                 start_byte=node.start_byte,
                 end_byte=node.end_byte,
             )
+            field.doc_start_byte = _doc_start_byte(field, pending_docs, node, src)
             out.append(field)
             return "attr"
 

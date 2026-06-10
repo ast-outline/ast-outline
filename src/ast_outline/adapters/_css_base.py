@@ -68,7 +68,7 @@ def _emit_simple_selectors(node: Node, src: bytes, out: list[str]) -> None:
     t = node.type
 
     if t == "class_selector":
-        out.append(_class_selector_text(node, src))
+        _emit_class_selector(node, src, out)
     elif t == "id_selector":
         out.append(_id_selector_text(node, src))
     elif t in ("tag_name", "type_selector"):
@@ -152,27 +152,58 @@ def _emit_simple_selectors(node: Node, src: bytes, out: list[str]) -> None:
     # Unknown compound shape — skip silently.
 
 
-def _class_selector_text(node: Node, src: bytes) -> str:
-    """Render a class_selector to its bare token form.
+def _emit_class_selector(node: Node, src: bytes, out: list[str]) -> None:
+    """Emit match tokens for a ``class_selector``, compound shapes included.
 
-    Two shapes the grammar produces:
-    - Plain class: `.btn-primary` → children include `.` + `class_name(btn-primary)`.
-    - SCSS BEM nesting: `&__header` → children include
-      `nesting_selector(&)` + `class_name(__header)`. We concatenate
-      so the token reads `&__header` (literal, pre-resolution).
+    The grammar nests compound selectors inside the outermost
+    ``class_selector``:
+
+    - Plain class: ``.btn`` → ``class_name(btn)`` only.
+    - Class-on-class: ``.a.b`` → ``class_selector(.a)`` + ``class_name(b)``.
+    - Id-qualified: ``#header.nav`` → ``id_selector(#header)`` + ``class_name(nav)``.
+    - Tag-qualified: ``div.container`` → ``tag_name(div)`` + ``class_name(container)``.
+    - SCSS compound nesting: ``&.active`` → ``nesting_selector(&)`` +
+      ``class_name(active)``.
+    - SCSS BEM nesting: ``&__header`` → ``nesting_selector(&)`` +
+      ``class_name(__header)`` — same node shape as ``&.active``; the
+      two are told apart by whether a literal ``.`` precedes the class
+      name in the source.
+
+    Emitted tokens: each inner selector on its own (an agent searching
+    ``#header`` must find the ``#header.nav`` rule), the bare class
+    (``.nav``) when it is dot-prefixed in source, and the rebuilt
+    compound (``#header.nav``, ``&.active`` pre-resolution) so the
+    exact-compound query also resolves. Pseudo decorations are stripped
+    by the inner recursion, matching the module's selector contract.
     """
+    name_node: Optional[Node] = None
     has_nesting = False
-    name = ""
+    inner: list[str] = []
     for c in node.named_children:
         if c.type == "nesting_selector":
             has_nesting = True
-        elif c.type == "class_name":
-            name = _text(c, src)
-        elif c.type == "identifier":
-            name = _text(c, src)
+        elif c.type in ("class_name", "identifier"):
+            name_node = c
+        else:
+            _emit_simple_selectors(c, src, inner)
+    out.extend(inner)
+    if name_node is None:
+        if has_nesting and not inner:
+            out.append("&")
+        return
+    name = _text(name_node, src)
+    dot = src[name_node.start_byte - 1 : name_node.start_byte] == b"."
+    sep = "." if dot else ""
+    if dot:
+        out.append("." + name)
     if has_nesting:
-        return "&" + name
-    return "." + name
+        out.append("&" + sep + name)
+    elif inner:
+        out.append(inner[-1] + sep + name)
+    elif not dot:
+        # No dot, no nesting, no inner context — keep the raw name so
+        # degenerate grammar shapes still yield a findable token.
+        out.append(name)
 
 
 def _id_selector_text(node: Node, src: bytes) -> str:

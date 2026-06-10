@@ -287,3 +287,55 @@ def test_operator_names_follow_convention(csharp_dir):
     # implicit conversion to decimal, explicit conversion to Money
     assert "operator_decimal" in op_names
     assert "operator_Money" in op_names
+
+
+# --- Multi-declarator fields / doc-at-byte-0 / attr edge cases -----------
+
+
+def test_multi_declarator_field_emits_every_name(tmp_path):
+    """`int x, y, z;` declares three fields in ONE field_declaration —
+    a single-name path silently dropped `y` and `z` from the IR."""
+    p = tmp_path / "a.cs"
+    p.write_text("class Foo { int x, y, z; }\n", encoding="utf-8")
+    r = CSharpAdapter().parse(p)
+    names = [d.name for d in _find_all(r.declarations, kind=KIND_FIELD)]
+    assert names == ["x", "y", "z"], names
+
+
+def test_multi_declarator_event_field_emits_every_name(tmp_path):
+    p = tmp_path / "a.cs"
+    p.write_text(
+        "class Foo { event System.EventHandler A, B; }\n", encoding="utf-8"
+    )
+    r = CSharpAdapter().parse(p)
+    names = [d.name for d in _find_all(r.declarations, kind=KIND_EVENT)]
+    assert names == ["A", "B"], names
+
+
+def test_doc_comment_at_byte_zero_included_in_show_slice(tmp_path):
+    """A file that OPENS with `///` puts the doc block at byte 0 —
+    `doc_start_byte or start_byte` treated that 0 as "no doc" and the
+    `show` slice skipped the doc entirely."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.cs"
+    p.write_text("/// Summary\nclass Foo {}\n", encoding="utf-8")
+    r = CSharpAdapter().parse(p)
+    cls = _find(r.declarations, kind=KIND_CLASS, name="Foo")
+    assert cls.doc_start_byte == 0
+    m = find_symbols(r, "Foo")[0]
+    assert m.source.startswith("/// Summary"), m.source
+
+
+def test_attribute_with_bracket_inside_string_argument(tmp_path):
+    """A `]` inside a quoted attribute argument is content, not the
+    attribute-list closer — the naive depth scan cut the signature
+    mid-string (`in it")] public class Foo`)."""
+    p = tmp_path / "a.cs"
+    p.write_text(
+        '[System.ComponentModel.Description("has ] in it")]\n'
+        "public class Foo {}\n",
+        encoding="utf-8",
+    )
+    r = CSharpAdapter().parse(p)
+    cls = _find(r.declarations, kind=KIND_CLASS, name="Foo")
+    assert cls.signature == "public class Foo", cls.signature

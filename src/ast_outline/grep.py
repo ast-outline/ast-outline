@@ -245,80 +245,19 @@ def looks_like_ambiguous_regex(pattern: str) -> bool:
     return bool(_AMBIGUOUS_REGEX_FINGERPRINT.search(pattern))
 
 
-# Languages where these single-line comment markers apply. We don't
-# track block comments — in practice agents grep for symbols, not for
-# patterns that span comment blocks, so the false-positive rate of
-# block comments masquerading as code is low.
-_COMMENT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
-    "python": ("#",),
-    "ruby": ("#",),
-    "yaml": ("#",),
-    "csharp": ("//",),
-    "java": ("//",),
-    "kotlin": ("//",),
-    "scala": ("//",),
-    "go": ("//",),
-    "rust": ("//",),
-    "typescript": ("//",),
-    "cpp": ("//",),
-    "php": ("//", "#"),
-    "css": ("//",),  # not real CSS; SCSS extension allows it
-    "scss": ("//",),
-    "sql": ("--",),
-    "lua": ("--",),
-    "swift": ("//",),
-    "markdown": (),  # markdown has no comment syntax we need to skip
-    # HTML only has block comments (``<!--…-->``) which span lines and
-    # are already filtered via ``noise_regions`` populated by the
-    # adapter. The line-prefix heuristic has nothing to add.
-    "html": (),
-}
-
-# Per-language import-line detection. We match the line's leading
-# stripped content — if it starts with one of these, the match is
-# treated as an import. Coarse but covers 95% of real cases.
+# Comment- and import-line prefixes are per-language facts and live on
+# each adapter (``comment_line_prefixes`` / ``import_line_prefixes`` —
+# see ``adapters.base.LanguageAdapter``), not in central tables here.
+# The classifier receives the adapter for the file being annotated and
+# reads them directly. We don't track block comments via prefixes — the
+# adapters cover those through ``ParseResult.noise_regions``.
 #
-# TypeScript ``export`` is intentionally NOT here: ``export class`` /
-# ``export function`` / ``export const`` are declarations, not
-# imports. Re-exports of the form ``export { X } from '...'`` get
-# misclassified as plain refs by this heuristic — acceptable trade
-# for not flooding every exported declaration with ``[import]``.
-_IMPORT_PREFIXES_BY_LANG: dict[str, tuple[str, ...]] = {
-    "python": ("import ", "from "),
-    "typescript": ("import ",),
-    "java": ("import ",),
-    "kotlin": ("import ",),
-    "scala": ("import ",),
-    "go": ("import ",),  # also `import (...)` blocks — handled by line-prefix only
-    "rust": ("use ",),
-    # ``"global using "`` covers C# 10+ (.NET 6+) file-scoped global
-    # using directives — single-line, distinct from the regular
-    # ``using`` because the line stripped starts with ``global ``,
-    # not ``using ``. Listed BEFORE ``"using "`` for readability;
-    # iteration order is irrelevant since both prefixes target
-    # disjoint line shapes.
-    "csharp": ("global using ", "using "),
-    "cpp": ("#include ", "#import "),
-    "php": ("use ", "require ", "require_once ", "include ", "include_once "),
-    "ruby": ("require ", "require_relative ", "load "),
-    "css": ("@import ",),
-    "scss": ("@import ", "@use ", "@forward "),
-    # Lua: ``require "x"`` (bare string-arg) and ``require("x")`` both
-    # start with the same prefix on the stripped line. The ``local X =
-    # require ...`` shape is intentionally not added here — ``local``
-    # is too broad and would mis-classify every local variable
-    # binding; that shape gets picked up by the adapter's
-    # ``import_regions`` instead (populated when the RHS is a
-    # ``require`` call), so single-line ``local X = require("y")`` is
-    # classified as import without a brittle prefix match.
-    "lua": ("require ", "require("),
-    "swift": ("import ",),
-    # HTML imports are tag-based (``<link rel=stylesheet>``,
-    # ``<script src=…>``), not line-prefix. The adapter populates
-    # ``import_regions`` instead, and the byte-range path classifies
-    # matches inside those tags as ``[import]`` directly.
-    "html": (),
-}
+# TypeScript ``export`` is intentionally NOT an import prefix:
+# ``export class`` / ``export function`` / ``export const`` are
+# declarations, not imports. Re-exports of the form ``export { X } from
+# '...'`` get misclassified as plain refs by the line heuristic —
+# acceptable trade for not flooding every exported declaration with
+# ``[import]``.
 
 
 # --- Data classes ---------------------------------------------------------
@@ -467,6 +406,7 @@ def grep(
 
         file_result, file_kind_excluded = _annotate_matches(
             result, spans, src,
+            adapter=adapter,
             include_noise=include_noise,
             kind_filter=kind_filter,
         )
@@ -602,6 +542,20 @@ def _build_matcher(
     ``re.finditer`` with the patterns combined via alternation. For
     literal mode the patterns are escaped first; for regex they're
     wrapped in non-capturing groups to keep precedence intact.
+
+    The slow path matches against the **decoded str**, not the raw
+    bytes. In bytes mode ``\\b`` / ``\\w`` / ``IGNORECASE`` are
+    ASCII-only: a ``-w`` search for a Cyrillic identifier never finds a
+    word boundary (every UTF-8 continuation byte is a non-word byte) and
+    ``-i`` can't case-fold non-ASCII — both silently return "no matches"
+    on source the project explicitly supports. Matching on str gives
+    Unicode-correct semantics; the codepoint spans are converted back to
+    byte offsets (the contract of this function) incrementally — matches
+    arrive in ascending order, so the conversion is amortized O(n).
+    ``surrogateescape`` keeps the round-trip byte-exact even for files
+    with invalid UTF-8 (each bad byte maps to one surrogate codepoint
+    and encodes back to the same byte; ``replace`` would substitute a
+    3-byte replacement char and skew every following offset).
     """
     if not is_regex and not case_insensitive and len(patterns) == 1:
         needle = patterns[0].encode("utf-8")
@@ -624,17 +578,27 @@ def _build_matcher(
     if is_regex:
         # Wrap each pattern in a non-capturing group so an alternation
         # like ``a|b`` inside one of them doesn't bind the wrong way.
-        combined = b"|".join(
-            b"(?:" + p.encode("utf-8") + b")" for p in patterns
-        )
+        combined = "|".join("(?:" + p + ")" for p in patterns)
     else:
         # Literals — escape each, then alternate.
-        combined = b"|".join(re.escape(p.encode("utf-8")) for p in patterns)
+        combined = "|".join(re.escape(p) for p in patterns)
     rx = re.compile(combined, flags)
 
     def _regex_iter(src: bytes) -> Iterable[tuple[int, int]]:
-        for m in rx.finditer(src):
-            yield m.start(), m.end()
+        text = src.decode("utf-8", errors="surrogateescape")
+        last_cp = 0
+        last_byte = 0
+        for m in rx.finditer(text):
+            s_cp, e_cp = m.start(), m.end()
+            last_byte += len(
+                text[last_cp:s_cp].encode("utf-8", "surrogateescape")
+            )
+            start_byte = last_byte
+            last_byte += len(
+                text[s_cp:e_cp].encode("utf-8", "surrogateescape")
+            )
+            last_cp = e_cp
+            yield start_byte, last_byte
 
     return _regex_iter
 
@@ -647,6 +611,7 @@ def _annotate_matches(
     spans: list[tuple[int, int]],
     src: bytes,
     *,
+    adapter,
     include_noise: bool,
     kind_filter: set[str] | None = None,
 ) -> tuple[GrepFileResult, dict[str, int]]:
@@ -741,7 +706,7 @@ def _annotate_matches(
                 line_content=line_content,
                 column=column,
                 match_end_column=match_end_column,
-                language=result.language,
+                adapter=adapter,
             )
 
         if kind != KIND_COMMENT and _pos_in_import_region(import_regions, pos):
@@ -890,19 +855,24 @@ def _find_enclosing(decls: list[Declaration], pos: int) -> list[Declaration]:
 
 
 def _classify_match(
-    *, line_content: str, column: int, match_end_column: int, language: str
+    *, line_content: str, column: int, match_end_column: int, adapter
 ) -> str:
     """Heuristically classify a match as comment / string / import / call / ref.
 
     ``def`` is decided in :func:`_annotate_matches` after the scope
     walk — it requires knowing whether the match is on a declaration's
     own signature line.
+
+    All per-language lexical facts come from ``adapter`` — the comment /
+    import line prefixes plus the optional quirk attributes documented
+    on ``adapters.base.LanguageAdapter`` (Rust lifetime quotes, Lua
+    chain separators and sugar-call openers).
     """
     stripped = line_content.lstrip()
 
     # Comment check first — if the entire line is a comment, the match
     # is in a comment regardless of position.
-    comment_prefixes = _COMMENT_PREFIXES_BY_LANG.get(language, ())
+    comment_prefixes = adapter.comment_line_prefixes
     for prefix in comment_prefixes:
         if stripped.startswith(prefix):
             return KIND_COMMENT
@@ -917,8 +887,7 @@ def _classify_match(
 
     # Import-line check — also coarse, but imports rarely look like
     # other constructs in practice.
-    import_prefixes = _IMPORT_PREFIXES_BY_LANG.get(language, ())
-    for prefix in import_prefixes:
+    for prefix in adapter.import_line_prefixes:
         if stripped.startswith(prefix):
             return KIND_IMPORT
 
@@ -926,7 +895,11 @@ def _classify_match(
     # match position. Odd → inside a string. This is wrong for raw
     # strings, multi-line strings, escaped quotes inside strings —
     # acknowledged in the module docstring.
-    if _column_inside_string(line_content, column):
+    if _column_inside_string(
+        line_content,
+        column,
+        single_quote_lifetimes=getattr(adapter, "single_quote_lifetimes", False),
+    ):
         return KIND_STRING
 
     # Call vs. ref — peek at the first significant char immediately
@@ -939,13 +912,22 @@ def _classify_match(
     # Without this skip, a generic call like ``genericCall<string>()``
     # would land on ``<`` and fall through to KIND_REF — the most
     # painful misclassification for TS / Rust / Java / C# code.
-    if _next_call_paren_after(line_content, match_end_column - 1, language=language):
+    if _next_call_paren_after(
+        line_content,
+        match_end_column - 1,
+        name_chain_separators=getattr(adapter, "name_chain_separators", ""),
+        call_sugar_openers=getattr(adapter, "call_sugar_openers", ()),
+    ):
         return KIND_CALL
     return KIND_REF
 
 
 def _next_call_paren_after(
-    line_content: str, start: int, *, language: str = ""
+    line_content: str,
+    start: int,
+    *,
+    name_chain_separators: str = "",
+    call_sugar_openers: tuple[str, ...] = (),
 ) -> bool:
     """True if a ``(`` follows ``start``, after skipping call-prefixes.
 
@@ -1061,23 +1043,21 @@ def _next_call_paren_after(
         if ch == ":" and i + 1 < n and line_content[i + 1] == ":":
             i += 2
             continue
-        # Lua-specific skips and call shapes. Placed BEFORE the
-        # ``<[`` generic-args block so the ``[[`` long-string sugar-
-        # call (``f[[hello]]``) wins over the would-be ``[...]``
-        # generic-args balanced walk. In Lua there are no generics
-        # (vanilla 5.x — Luau is out of scope for v1), so the generic-
-        # args walk is purely a TS/Rust/Go construct and skipping it
-        # for Lua loses nothing.
-        if language == "lua":
-            # Method / field chain: ``.identifier`` or ``:identifier``
-            # — skip the separator and the entire identifier that
-            # follows, then keep walking. Composes naturally:
-            # ``a.b.c(`` walks ``.``→``b``→``.``→``c`` and lands on
-            # ``(``. Bias toward call: agents searching for a name
-            # appearing as the receiver of a chained call almost
-            # always want the call site surfaced (same rationale as
-            # v0.8.12's one-shot identifier-tail skip).
-            if ch in ".:" and i + 1 < n:
+        # Adapter-declared lexical quirks. Placed BEFORE the ``<[``
+        # generic-args block so a multi-char sugar opener like Lua's
+        # ``[[`` long-string call wins over the would-be ``[...]``
+        # generic-args balanced walk (languages that declare sugar
+        # openers — Lua — have no generics, so nothing is lost).
+        if name_chain_separators:
+            # Method / field chain: ``<sep>identifier`` — skip the
+            # separator and the entire identifier that follows, then
+            # keep walking. Composes naturally: ``a.b.c(`` walks
+            # ``.``→``b``→``.``→``c`` and lands on ``(``. Bias toward
+            # call: agents searching for a name appearing as the
+            # receiver of a chained call almost always want the call
+            # site surfaced (same rationale as the one-shot
+            # identifier-tail skip above).
+            if ch in name_chain_separators and i + 1 < n:
                 nxt = line_content[i + 1]
                 if nxt == "_" or nxt.isalpha():
                     i += 1
@@ -1088,15 +1068,16 @@ def _next_call_paren_after(
                             continue
                         break
                     continue
-            # Sugar-call shapes — Lua treats ``f"x"`` / ``f'x'`` /
-            # ``f{...}`` / ``f[[...]]`` as syntactic sugar for the
-            # parenthesised call. Same call semantics, same
-            # classification. Bare ``[`` is intentionally NOT a call
-            # marker for Lua (``f[key]`` is a subscript, not a call);
-            # only the doubled ``[[`` opens a long-string call arg.
-            if ch in '"\'{':
-                return True
-            if ch == "[" and i + 1 < n and line_content[i + 1] == "[":
+        if call_sugar_openers:
+            # Paren-less call argument (Lua ``f"x"`` / ``f'x'`` /
+            # ``f{...}`` / ``f[[...]]``) — same call semantics as a
+            # parenthesised call, same classification. Which tokens
+            # qualify is the adapter's call: Lua deliberately lists
+            # ``[[`` but not bare ``[`` (``f[key]`` is a subscript).
+            if any(
+                line_content.startswith(opener, i)
+                for opener in call_sugar_openers
+            ):
                 return True
         if ch in "<[":
             close = ">" if ch == "<" else "]"
@@ -1116,12 +1097,24 @@ def _next_call_paren_after(
     return False
 
 
-def _column_inside_string(line_content: str, column: int) -> bool:
+def _column_inside_string(
+    line_content: str, column: int, *, single_quote_lifetimes: bool = False
+) -> bool:
     """True if column is inside an open string literal on this line.
 
     Counts unescaped single and double quotes preceding the column.
     Tracks state so a `"` inside a `'...'` string doesn't toggle the
     other quote's count. Imperfect — see module docstring caveats.
+
+    ``single_quote_lifetimes`` (declared by the Rust adapter): a single
+    quote followed by an identifier char with no closing quote right
+    after is a lifetime (``'a``, ``'static``, ``'_``), not a string
+    delimiter. Lifetimes are unpaired, so counting them flips the
+    in-string state for the entire rest of the line — every match after
+    ``&'a`` on a signature line would silently classify as ``[string]``
+    and be noise-filtered. Char literals (``'x'``, ``'\\n'``) still
+    toggle normally: they either close within two chars or start with a
+    backslash escape.
     """
     in_single = False
     in_double = False
@@ -1135,6 +1128,17 @@ def _column_inside_string(line_content: str, column: int) -> bool:
         if ch == '"' and not in_single:
             in_double = not in_double
         elif ch == "'" and not in_double:
+            if (
+                single_quote_lifetimes
+                and not in_single
+                and i + 1 < len(line_content)
+                and (line_content[i + 1].isalpha() or line_content[i + 1] == "_")
+                and (i + 2 >= len(line_content) or line_content[i + 2] != "'")
+            ):
+                # Lifetime — skip the quote, let the identifier chars
+                # run through the normal scan.
+                i += 1
+                continue
             in_single = not in_single
         i += 1
     return in_single or in_double

@@ -102,3 +102,17 @@ def swift_dir() -> Path:
 @pytest.fixture(scope="session")
 def html_dir() -> Path:
     return FIXTURES_DIR / "html"
+
+
+@pytest.fixture(autouse=True)
+def _reset_adapter_lookup_cache():
+    """`core._adapter_for_language` is lru_cached at process level; a
+    test that monkeypatches `adapters.ADAPTERS` would otherwise see
+    stale pre-patch entries in any later `_render_family` /
+    `_file_format_suffix` call. Clearing per-test keeps the cache an
+    invisible optimization rather than hidden cross-test state."""
+    from ast_outline.core import _adapter_for_language
+
+    _adapter_for_language.cache_clear()
+    yield
+    _adapter_for_language.cache_clear()

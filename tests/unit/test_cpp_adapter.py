@@ -711,3 +711,18 @@ def test_ue_member_with_template_argument(cpp_dir):
     inv = _find(actor.children, kind=KIND_FIELD, name="Inventory")
     assert inv is not None
     assert "TArray" in inv.signature
+
+
+def test_template_class_show_slice_includes_trailing_semicolon(tmp_path):
+    """`template<…> class Foo { … };` — the inner class_specifier ends
+    at `}`, the template_declaration one byte later at `;`. The decl
+    must take the OUTER end so the `show` slice is a syntactically
+    complete declaration."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.cpp"
+    p.write_text(
+        "template<typename T>\nclass Foo { T x; };\n", encoding="utf-8"
+    )
+    r = CppAdapter().parse(p)
+    m = find_symbols(r, "Foo")[0]
+    assert m.source.endswith("};"), m.source

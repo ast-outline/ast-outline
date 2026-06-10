@@ -247,6 +247,9 @@ class CppAdapter:
     definition_keywords = frozenset({
         "class", "struct", "enum", "union", "namespace",
     })
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('#include ', '#import ')
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -1028,9 +1031,13 @@ def _template_to_decl(
             template_prefix=template_prefix,
         )
         # Outer template node spans more than the inner type — keep the
-        # outer span so `show` returns the template header too.
+        # outer span on BOTH ends so `show` returns the template header
+        # and the trailing `;` (the inner class_specifier ends at `}`,
+        # the template_declaration one byte later at `;`).
         decl.start_line = node.start_point[0] + 1
         decl.start_byte = node.start_byte
+        decl.end_line = node.end_point[0] + 1
+        decl.end_byte = node.end_byte
         return decl
     if inner.type == "function_definition":
         decl = _free_function_to_decl(inner, src, in_class=in_class)
@@ -1038,6 +1045,8 @@ def _template_to_decl(
             decl.signature = f"{template_prefix} {decl.signature}".strip()
             decl.start_line = node.start_point[0] + 1
             decl.start_byte = node.start_byte
+            decl.end_line = node.end_point[0] + 1
+            decl.end_byte = node.end_byte
         return decl
     if inner.type == "declaration":
         if _has_function_declarator(inner):
@@ -1046,6 +1055,8 @@ def _template_to_decl(
                 decl.signature = f"{template_prefix} {decl.signature}".strip()
                 decl.start_line = node.start_point[0] + 1
                 decl.start_byte = node.start_byte
+                decl.end_line = node.end_point[0] + 1
+                decl.end_byte = node.end_byte
             return decl
     if inner.type == "concept_definition":
         return _concept_to_decl(node, inner, src, template_prefix=template_prefix)

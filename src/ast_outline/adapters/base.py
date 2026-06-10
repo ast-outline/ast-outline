@@ -28,6 +28,47 @@ class LanguageAdapter(Protocol):
     # SQL, YAML, Markdown, HTML) declare an empty set.
     definition_keywords: frozenset[str]
 
+    # Single-line comment markers — a stripped line starting with one of
+    # these is a comment for ``grep``'s noise classifier. Languages whose
+    # only comment form is block-style (HTML) or that have none
+    # (Markdown) declare an empty tuple; block comments are covered by
+    # ``ParseResult.noise_regions``, not these prefixes.
+    comment_line_prefixes: tuple[str, ...]
+
+    # Line prefixes that mark an import / use / include statement for
+    # ``grep``'s ``[import]`` classifier (matched against the stripped
+    # line start). Languages whose imports aren't line-shaped (HTML's
+    # ``<link>`` / ``<script src>``) declare an empty tuple and rely on
+    # ``ParseResult.import_regions`` instead.
+    import_line_prefixes: tuple[str, ...]
+
+    # Which digest / file-header rendering family this language belongs
+    # to. ``core`` renders each family differently (markdown → TOC,
+    # yaml → top-level keys / per-doc separators, css → flat selector
+    # tokens, html → depth-capped element map, code → types + members);
+    # the adapter declares its family so a new language never needs a
+    # ``language == ...`` branch in core. One of: ``"code"``,
+    # ``"markdown"``, ``"yaml"``, ``"css"``, ``"html"``.
+    render_family: str
+
+    # --- Optional attributes, read via ``getattr`` with a default -------
+    #
+    # Rare per-language lexical quirks consumed by ``grep``'s
+    # classifiers. Only the adapters they apply to declare them:
+    #
+    # ``single_quote_lifetimes: bool`` (Rust) — a single quote followed
+    #     by an identifier char with no closing quote right after is a
+    #     lifetime (``'a``), not a string delimiter.
+    # ``name_chain_separators: str`` (Lua ``".:"``) — separators whose
+    #     ``<sep><identifier>`` runs are skipped when walking from a
+    #     match toward a call paren (``a.b:c(...)`` classifies as call).
+    # ``call_sugar_openers: tuple[str, ...]`` (Lua ``'"'``, ``"'"``,
+    #     ``"{"``, ``"[["``) — tokens that open a paren-less call
+    #     argument (``f"x"`` / ``f{...}`` / ``f[[...]]``).
+    # ``file_format_hint(declarations) -> str`` (YAML) — short format
+    #     annotation for the file header (``OpenAPI 3.0.0, 23 paths``);
+    #     empty string when nothing is detected.
+
     def parse(self, path: Path) -> ParseResult: ...
 
 

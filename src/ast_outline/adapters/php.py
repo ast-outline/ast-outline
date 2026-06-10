@@ -171,6 +171,9 @@ class PhpAdapter:
     definition_keywords = frozenset({
         "class", "interface", "trait", "function", "enum",
     })
+    comment_line_prefixes = ('//', '#')
+    import_line_prefixes = ('use ', 'require ', 'require_once ', 'include ', 'include_once ')
+    render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -874,6 +877,10 @@ def _promoted_properties(method_node: Node, src: bytes) -> list[Declaration]:
                 end_line=p.end_point[0] + 1,
                 start_byte=p.start_byte,
                 end_byte=p.end_byte,
+                # No leading doc on a ctor parameter — point at the
+                # parameter itself; the default 0 would be a garbage
+                # offset for JSON consumers reading the field directly.
+                doc_start_byte=p.start_byte,
             )
         )
     return out

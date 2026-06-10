@@ -108,6 +108,17 @@ class LuaAdapter:
     display_name = "Lua"
     extensions = {".lua", ".wlua"}
     definition_keywords = frozenset({"function"})
+    comment_line_prefixes = ('--',)
+    import_line_prefixes = ('require ', 'require(')
+    render_family = "code"
+    # Method / field chains (`a.b:c(...)`) and paren-less sugar calls
+    # (`f"x"` / `f'x'` / `f{...}` / `f[[...]]`) — consumed by grep's
+    # call-vs-ref walker. Bare `[` is deliberately NOT a sugar opener
+    # (`f[key]` is a subscript); only the doubled `[[` long-string
+    # bracket opens a call argument. See LanguageAdapter's optional
+    # attributes.
+    name_chain_separators = ".:"
+    call_sugar_openers = ('"', "'", "{", "[[")
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

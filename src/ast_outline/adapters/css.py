@@ -70,6 +70,9 @@ class CssAdapter:
     extensions = {".css"}
     # No leading declaration keyword — rules are selector-based.
     definition_keywords = frozenset()
+    comment_line_prefixes = ('//',)
+    import_line_prefixes = ('@import ',)
+    render_family = "css"
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

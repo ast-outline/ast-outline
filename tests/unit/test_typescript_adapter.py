@@ -710,3 +710,74 @@ def test_multiline_describe_signature_has_no_spurious_space(tmp_path):
     suite = _find(r.declarations, kind=KIND_BLOCK, name="a long suite name")
     assert suite is not None
     assert suite.signature == "describe('a long suite name')"
+
+
+# --- doc at byte 0 / abstract members / generator functions ---------------
+
+
+def test_jsdoc_at_byte_zero_included_in_show_slice(tmp_path):
+    """A `.ts` file that opens with the JSDoc of its first export puts
+    the doc block at byte 0 — the `or node.start_byte` pattern treated
+    that 0 as "no doc" and `show` sliced past the comment."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.ts"
+    p.write_text(
+        "/** First class doc. */\nexport class First {}\n", encoding="utf-8"
+    )
+    r = TypeScriptAdapter().parse(p)
+    cls = r.declarations[0]
+    assert cls.doc_start_byte == 0
+    m = find_symbols(r, "First")[0]
+    assert m.source.startswith("/** First class doc. */"), m.source
+
+
+def test_abstract_method_signature_surfaces(tmp_path):
+    """`abstract area(): number;` in an abstract class body is an
+    `abstract_method_signature` node — previously unhandled, so
+    abstract members vanished from the outline."""
+    p = tmp_path / "a.ts"
+    p.write_text(
+        "abstract class Shape {\n"
+        "    abstract area(): number;\n"
+        "    describe(): string { return 's'; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    r = TypeScriptAdapter().parse(p)
+    shape = r.declarations[0]
+    names = [c.name for c in shape.children]
+    assert "area" in names, names
+    assert "describe" in names, names
+
+
+def test_generator_function_declarations_surface(tmp_path):
+    """`function* gen() {}` is a `generator_function_declaration` —
+    previously unhandled both bare and behind `export`."""
+    p = tmp_path / "a.ts"
+    p.write_text(
+        "function* gen() { yield 1; }\n"
+        "export function* exportedGen() { yield 2; }\n"
+        "async function* asyncGen() { yield 3; }\n",
+        encoding="utf-8",
+    )
+    r = TypeScriptAdapter().parse(p)
+    names = [d.name for d in r.declarations]
+    assert names == ["gen", "exportedGen", "asyncGen"], names
+
+
+def test_interface_property_doc_included_in_show_slice(tmp_path):
+    """Interface property signatures collected docs but not
+    `doc_start_byte`, so the `show` slice started at the property
+    itself and dropped its JSDoc."""
+    from ast_outline.core import find_symbols
+    p = tmp_path / "a.ts"
+    p.write_text(
+        "interface Foo {\n"
+        "    /** doc for name */\n"
+        "    name: string;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    r = TypeScriptAdapter().parse(p)
+    m = find_symbols(r, "Foo.name")[0]
+    assert m.source.startswith("/** doc for name */"), m.source
