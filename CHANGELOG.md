@@ -7,6 +7,49 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.5.0] — 2026-06-11
+
+### Added
+
+- **GDScript support (`.gd`)** — the first adapter with a hand-written
+  parser instead of tree-sitter (no maintained `tree-sitter-gdscript`
+  wheel exists on PyPI; grammar ground truth is the Godot 4
+  tokenizer/parser sources, with Godot 3 compatibility shapes from the
+  tree-sitter-gdscript grammar). The scanner keeps every logical line
+  in two aligned copies — source text and a "shadow" with string
+  contents blanked — so declarations inside string literals or
+  comments can never leak into the outline. Mapping highlights:
+  - `class_name X` + `extends Y` merge into one class node (the
+    script's implicit class); a bare `extends Y` becomes a class node
+    named after the base, so agents can search "which scripts extend
+    `CharacterBody2D`".
+  - `signal` → event, `enum` → enum with members, `_init` → ctor;
+    `var` with `get`/`set` blocks, `get =`/`set =` references, or
+    legacy `setget` → property; lambdas are never captured.
+  - Annotations (`@export`, `@onready`, `@rpc(...)`, `@abstract`, …)
+    → attributes; `@abstract` functions are recognized as bodyless.
+    `## doc comments` → docs. Godot 3 `export var` / `onready var` /
+    rpc keywords are kept in signatures.
+  - `const X = preload("res://...")` and `extends "res://..."` feed
+    the imports list (with `import_regions` for grep); `load(` /
+    `preload(` inside function bodies count as conditional imports.
+  - Engine virtual callbacks (`_ready`, `_process`, …) are NOT
+    treated as private, so they survive digest's default private
+    filter; other `_name` members keep the private-by-convention
+    reading. Strings that span lines (Godot allows raw newlines in
+    ANY string literal, not just triple-quoted ones) are reported as
+    noise regions, so `grep` filters matches inside them by default.
+  - Validated against ~1.9k `.gd` files from seven open-source Godot
+    projects (Pixelorama, godot-demo-projects, Dialogic, Material
+    Maker, Beehave, Phantom Camera, Tanks of Freedom): no crashes, IR
+    invariants hold, the only files reporting parse errors genuinely
+    contain broken syntax. A differential run against
+    tree-sitter-gdscript agrees on 1891 of 1895 comparable files —
+    the four disagreements are a tree-sitter indentation quirk around
+    comment-only lines after a function header, where this parser
+    matches Godot's actual tokenizer (comments don't establish
+    indentation).
+
 ## [1.4.0] — 2026-06-10
 
 A bug-audit release: every change below was reproduced as incorrect

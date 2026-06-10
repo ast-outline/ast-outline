@@ -176,6 +176,7 @@ ast-outline prompt | pbcopy   # macOS clipboard
 | PHP        | `.php`, `.phtml`, `.phps`, `.php8` *(PHP 8.x + 7.4 LTS; tested on WordPress core)* |
 | Ruby       | `.rb`, `.rake`, `.gemspec`, `.ru`, `Rakefile`, `Gemfile` *(incl. Rails associations)* |
 | Lua        | `.lua`, `.wlua` *(vanilla 5.1–5.4; `function M:foo` → method, metamethods → operator; covers Neovim, LÖVE, OpenResty, Redis scripts)* |
+| GDScript   | `.gd` *(Godot 4 + Godot 3; hand-written parser — no tree-sitter grammar wheel exists; `class_name`/`extends` merged into the script's implicit class, signals → events, `@export`/`@onready` → attributes, properties with `get`/`set`/`setget`, `preload` → imports)* |
 | Swift      | `.swift` *(structs, enums, protocols, extensions, actors; generics & protocol conformance)* |
 | CSS        | `.css` |
 | SCSS       | `.scss` |

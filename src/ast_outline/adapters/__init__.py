@@ -22,6 +22,7 @@ from .base import LanguageAdapter
 from .cpp import CppAdapter
 from .csharp import CSharpAdapter
 from .css import CssAdapter
+from .gdscript import GDScriptAdapter
 from .go import GoAdapter
 from .html import HtmlAdapter
 from .java import JavaAdapter
@@ -53,6 +54,7 @@ ADAPTERS: list[LanguageAdapter] = [
     PhpAdapter(),
     RubyAdapter(),
     LuaAdapter(),
+    GDScriptAdapter(),
     CssAdapter(),
     ScssAdapter(),
     SqlAdapter(),

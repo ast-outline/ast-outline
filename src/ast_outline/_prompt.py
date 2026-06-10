@@ -32,7 +32,7 @@ AGENT_PROMPT = """## Code exploration — prefer `ast-outline` over full reads
 For `.cs`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hh`, `.py`, `.pyi`,
 `.ts`, `.tsx`, `.js`, `.jsx`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`,
 `.go`, `.rs`, `.php`, `.phtml`, `.rb`, `.rake`, `.gemspec`, `.lua`,
-`.swift`, `.css`, `.scss`, `.sql`, `.html`, `.htm`, `.md`, and
+`.gd`, `.swift`, `.css`, `.scss`, `.sql`, `.html`, `.htm`, `.md`, and
 `.yaml`/`.yml` files, read structure with `ast-outline` before opening
 full contents.
 
