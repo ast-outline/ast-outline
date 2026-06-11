@@ -46,6 +46,9 @@ class PythonAdapter:
     comment_line_prefixes = ('#',)
     import_line_prefixes = ('import ', 'from ')
     render_family = "code"
+    # ``uv`` belongs here because ``#!/usr/bin/env -S uv run --script``
+    # is the modern single-file-script shebang and uv runs Python only.
+    shebang_programs = frozenset({"python", "pypy", "uv"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

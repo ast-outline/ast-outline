@@ -111,6 +111,7 @@ class LuaAdapter:
     comment_line_prefixes = ('--',)
     import_line_prefixes = ('require ', 'require(')
     render_family = "code"
+    shebang_programs = frozenset({"lua", "luajit"})
     # Method / field chains (`a.b:c(...)`) and paren-less sugar calls
     # (`f"x"` / `f'x'` / `f{...}` / `f[[...]]`) — consumed by grep's
     # call-vs-ref walker. Bare `[` is deliberately NOT a sugar opener

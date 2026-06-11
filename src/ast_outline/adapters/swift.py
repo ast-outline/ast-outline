@@ -83,6 +83,7 @@ class SwiftAdapter:
     comment_line_prefixes = ('//',)
     import_line_prefixes = ('import ',)
     render_family = "code"
+    shebang_programs = frozenset({"swift"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

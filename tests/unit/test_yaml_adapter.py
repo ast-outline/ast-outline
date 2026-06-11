@@ -556,33 +556,42 @@ def test_noise_regions_empty_when_no_block_scalars(yaml_dir):
     assert r.noise_regions == []
 
 
-def test_grep_filters_matches_inside_block_scalar(yaml_dir):
-    """Matches inside ``run: |`` shell bodies vanish under default noise filter."""
+def test_grep_shows_block_scalar_matches_tagged_string(yaml_dir):
+    """Hits inside ``run: |`` shell bodies surface, tagged ``string``.
+
+    The embedded shell lines are the actual content of a CI config —
+    an agent asking "where does this pipeline call npm" needs exactly
+    them. They follow the strings-visible default; only YAML comments
+    stay hidden.
+    """
     from ast_outline.grep import grep
 
     path = yaml_dir / "grep_noise.yaml"
     results, _ignored, _excluded = grep("npm", [path])
-    assert results, "expected structural mentions to survive"
+    assert results
     fr = results[0]
     src_lines = path.read_text().splitlines()
-    for m in fr.matches:
-        line = src_lines[m.line - 1]
-        # No shell-line hits — those live inside ``run: |`` / ``run: >``.
-        assert "npm install" not in line
-        assert "npm run lint" not in line
-        assert "npm run build" not in line
-    # Plenty of matches were swallowed by the filter.
-    assert fr.filtered_count > 0
+    shell_hits = [
+        m for m in fr.matches
+        if any(
+            tok in src_lines[m.line - 1]
+            for tok in ("npm install", "npm run lint", "npm run build")
+        )
+    ]
+    assert shell_hits, "run-block shell lines must be visible"
+    assert all(m.kind == "string" for m in shell_hits)
 
 
-def test_grep_include_noise_surfaces_block_scalar_matches(yaml_dir):
-    """``include_noise=True`` recovers shell-line hits inside ``run: |``."""
+def test_grep_include_noise_surfaces_yaml_comment_matches(yaml_dir):
+    """``include_noise=True`` recovers only the YAML-comment hits — the
+    block-scalar shell lines are already visible by default."""
     from ast_outline.grep import grep
 
     path = yaml_dir / "grep_noise.yaml"
     visible_default, _, _ = grep("npm", [path])
     all_with_noise, _, _ = grep("npm", [path], include_noise=True)
-    assert (
+    delta = (
         sum(len(fr.matches) for fr in all_with_noise)
-        > sum(len(fr.matches) for fr in visible_default)
+        - sum(len(fr.matches) for fr in visible_default)
     )
+    assert delta == visible_default[0].filtered_count > 0

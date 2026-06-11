@@ -4,9 +4,12 @@ What this is
 ------------
 A grep variant that returns matches annotated with their enclosing
 declaration scope (class/function chain) and a kind classification
-(``def`` / ``call`` / ``ref`` / ``import``). Filters out matches inside
-comments and strings by default — the noise that raw grep can't
-distinguish from real code.
+(``def`` / ``call`` / ``ref`` / ``import`` / ``string``). Filters out
+matches inside comments by default — the noise that raw grep can't
+distinguish from real code. String literals ARE searched and tagged
+``[string]``: strings are program data (dict / config / translation
+keys, asset paths, reflection targets), and hiding a hit there would
+hand the agent a silent false "not used".
 
 The intended consumer is an LLM agent that today does:
 
@@ -84,9 +87,10 @@ KIND_STRING = "string"
 # tags carry information that's NOT inferable from a single line:
 # ``def`` is multi-syntax across languages (``def`` / ``fn`` /
 # ``function`` / ``public void`` / …); ``import`` is similarly varied
-# and groups visually under ``## imports``; ``comment`` and ``string``
-# are only ever emitted via ``--include-noise`` and label why a match
-# was filtered.
+# and groups visually under ``## imports``; ``string`` labels a hit
+# inside a string literal (visible by default — strings are program
+# data); ``comment`` is only ever emitted via ``--include-noise`` and
+# labels why a match was filtered.
 _VISIBLE_KIND_TAGS = frozenset({KIND_DEF, KIND_IMPORT, KIND_COMMENT, KIND_STRING})
 
 
@@ -285,7 +289,7 @@ class GrepFileResult:
     language: str
     matches: list[GrepMatch] = field(default_factory=list)
     filtered_count: int = 0
-    """Matches hidden because they were comments or strings (and
+    """Matches hidden because they were comments (and
     ``include_noise`` was False). Surfaced in the rendered footer so
     the agent can opt in if relevant."""
     truncated_count: int = 0
@@ -336,14 +340,14 @@ def grep(
     out matches are dropped silently — they're not "hidden noise" the
     agent might want, they're explicitly excluded by the user's narrowing.
     Caller is responsible for setting ``include_noise=True`` if the
-    filter contains ``comment``/``string``; otherwise the noise filter
-    runs first and would zero out those kinds before this filter ever
-    sees them.
+    filter contains ``comment``; otherwise the noise filter runs first
+    and would zero out that kind before this filter ever sees it.
 
     Returns a tuple of (file_results, ignored_dirs_count,
     kind_excluded_counts). When ``include_noise=False`` (the default),
-    matches inside comments and strings are counted but filtered out
-    of the result.
+    matches inside comments are counted but filtered out of the
+    result; matches inside string literals are always returned, tagged
+    ``[string]``.
 
     ``kind_excluded_counts`` aggregates, across all files, how many
     matches were silently dropped by the ``kind_filter`` narrow —
@@ -726,12 +730,20 @@ def _annotate_matches(
         ):
             kind = KIND_DEF
 
-        if not include_noise and kind in (KIND_COMMENT, KIND_STRING):
+        # Only comments are noise-filtered by default. String literals
+        # are searched and shown (tagged ``[string]``): strings are
+        # program data — dict/config/translation keys, asset paths,
+        # ``animator.Play("State")`` — and hiding a hit there produces
+        # the worst agent failure mode, a silent false "not used".
+        # Comments stay hidden: commented-out code is the classic false
+        # positive that misleads an agent into treating dead code as
+        # live.
+        if not include_noise and kind == KIND_COMMENT:
             # Surface in ``filtered_count`` only when a future
             # ``--include-noise`` would actually make this visible. With
-            # a ``kind_filter`` that excludes ``comment``/``string``,
-            # the "pass --include-noise to see" hint would be misleading
-            # — the kind narrow would still drop those matches even with
+            # a ``kind_filter`` that excludes ``comment``, the "pass
+            # --include-noise to see" hint would be misleading — the
+            # kind narrow would still drop those matches even with
             # noise enabled. Suppress the count to keep the footer honest.
             if kind_filter is None or kind in kind_filter:
                 file_result.filtered_count += 1
@@ -743,8 +755,8 @@ def _annotate_matches(
                 # retry auto-enables ``--include-noise`` in the CLI
                 # layer, so the user's one-shot fix actually works.
                 # Without this, a pattern that lives only in comments
-                # / strings vanishes silently under any non-noise
-                # ``--kind`` narrow (def/call/ref/import).
+                # vanishes silently under any non-comment ``--kind``
+                # narrow (def/call/ref/import/string).
                 kind_excluded[kind] = kind_excluded.get(kind, 0) + 1
             continue
 
@@ -1178,7 +1190,7 @@ def _column_inside_name(line_content: str, column: int, name: str) -> bool:
 #       def update(...)  L100-115
 #           > L108: bar.save() [call]
 #
-#   # 3 matches in comments/strings hidden — pass --include-noise to see
+#   # 3 matches in comments hidden — pass --include-noise to see
 #
 # The `## imports` section is omitted when there are no import matches.
 # The `## matches` section is always present when at least one non-import
@@ -1218,7 +1230,7 @@ def _render_file(fr: GrepFileResult) -> str:
         sections.append("## matches")
         sections.extend(_render_code_matches(code_matches))
 
-    # Surface the hidden comment/string matches only when there are NO
+    # Surface the hidden comment matches only when there are NO
     # visible matches in this file. Then the header reads "(0 matches)"
     # and, without this line, the agent would wrongly conclude the symbol
     # is absent — the note is the false-negative guard. When the file
@@ -1228,8 +1240,8 @@ def _render_file(fr: GrepFileResult) -> str:
     if fr.filtered_count and not fr.matches:
         sections.append("")
         sections.append(
-            f"# {fr.filtered_count} matches in comments/strings hidden — "
-            "pass --include-noise to see"
+            f"# {fr.filtered_count} match{'es' if fr.filtered_count != 1 else ''} "
+            "in comments hidden — pass --include-noise to see"
         )
 
     if fr.truncated_count:

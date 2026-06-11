@@ -12,6 +12,7 @@ descending into ``node_modules`` just to throw the files away.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -130,12 +131,82 @@ _DEFAULT_IGNORE_PATTERNS: list[str] = [
 ]
 
 
+# A shebang line the kernel would honor is short; 256 bytes covers even
+# long ``env -S`` forms with room to spare.
+_SHEBANG_READ_BYTES = 256
+# Trailing version run in an interpreter name: ``python3`` / ``python3.13``
+# / ``lua5.4`` / ``php8`` → strip to the bare program. The suffix must
+# start with a digit (optionally preceded by ``-`` / ``.``), so names
+# like ``ts-node`` survive untouched.
+_SHEBANG_VERSION_SUFFIX = re.compile(r"[-.]?\d[\d.]*$")
+
+# ``env`` options that consume the NEXT token as their argument — the
+# argument must be skipped too, or ``#!/usr/bin/env -u VAR python3``
+# would read ``VAR`` as the interpreter. ``=``-joined long forms
+# (``--unset=VAR``) are covered by the generic ``=`` skip instead.
+_ENV_FLAGS_WITH_ARG = frozenset({"-u", "-C", "-P", "--unset", "--chdir"})
+
+
+def shebang_interpreter(path: Path) -> Optional[str]:
+    """Interpreter program named by ``path``'s shebang line, normalized
+    (basename, lowercase, version suffix stripped) — or None when the
+    file has no shebang or can't be read. ``env`` indirection is
+    unwrapped: flags (``-S`` & co.) and ``VAR=value`` assignments are
+    skipped, the next token is the real program."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_SHEBANG_READ_BYTES)
+    except OSError:
+        return None
+    if not head.startswith(b"#!"):
+        return None
+    line = head[2:].split(b"\n", 1)[0].decode("utf-8", errors="replace")
+    tokens = line.split()
+    if not tokens:
+        return None
+    program = os.path.basename(tokens[0])
+    if program == "env":
+        program = ""
+        skip_next = False
+        for t in tokens[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if t in _ENV_FLAGS_WITH_ARG:
+                skip_next = True
+                continue
+            if t.startswith("-") or "=" in t:
+                continue
+            program = os.path.basename(t)
+            break
+        if not program:
+            return None
+    return _SHEBANG_VERSION_SUFFIX.sub("", program.lower())
+
+
+def supported_shebang_programs() -> list[str]:
+    """Sorted union of interpreter names the adapters claim — single
+    source of truth for the "no files found" hint, same no-drift
+    rationale as ``supported_languages``."""
+    out: set[str] = set()
+    for a in ADAPTERS:
+        out.update(getattr(a, "shebang_programs", frozenset()))
+    return sorted(out)
+
+
 def get_adapter_for(path: Path) -> Optional[LanguageAdapter]:
     """Resolve the adapter for ``path`` by suffix first, then by exact
-    basename. The basename branch covers convention-named extensionless
-    files like ``Rakefile`` and ``Gemfile`` — Ruby projects routinely
-    ship them, and treating them as "unknown" would force the agent
-    into a full read for what is in practice plain Ruby."""
+    basename, then — for extensionless files only — by shebang. The
+    basename branch covers convention-named extensionless files like
+    ``Rakefile`` and ``Gemfile`` — Ruby projects routinely ship them,
+    and treating them as "unknown" would force the agent into a full
+    read for what is in practice plain Ruby. The shebang branch covers
+    unix-convention CLI scripts (``#!/usr/bin/env python3`` & co.):
+    agents hit these as explicit arguments, and without the sniff they
+    were reduced to symlinking the file to ``/tmp/x.py`` first. Only
+    explicit file inputs ever reach here without a recognized suffix —
+    the directory walker filters on suffix/basename and never pays the
+    open() this branch costs."""
     ext = path.suffix.lower()
     for a in ADAPTERS:
         if ext in a.extensions:
@@ -144,6 +215,12 @@ def get_adapter_for(path: Path) -> Optional[LanguageAdapter]:
     for a in ADAPTERS:
         if name in getattr(a, "basenames", set()):
             return a
+    if not ext and path.is_file():
+        program = shebang_interpreter(path)
+        if program:
+            for a in ADAPTERS:
+                if program in getattr(a, "shebang_programs", frozenset()):
+                    return a
     return None
 
 

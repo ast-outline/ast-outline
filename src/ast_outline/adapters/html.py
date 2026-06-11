@@ -49,8 +49,9 @@ Noise / drop rules (the outline shows structure, not the whole page):
   them addressable via CSS the way HTML elements are).
 - ``<script>`` and ``<style>`` bodies land in ``noise_regions`` (kind
   ``"string"``); HTML comments land there too (kind ``"comment"``).
-  ``ast-outline grep`` filters them by default, so an agent grepping
-  ``useState`` across ``templates/`` doesn't drown in inline JS bodies.
+  Under grep's strings-visible default the script/style hits surface
+  tagged ``[string]`` (inline JS is code — hiding a hit there reads as
+  a false "not used"); comment hits stay hidden.
 - A run of 3+ consecutive sibling bare ``<details>`` collapses to one
   synthetic ``details ×N`` line (FAQ pages otherwise dominate the
   outline with identical leaf nodes).
@@ -80,7 +81,7 @@ Out of scope (deliberate exclusions, may revisit in 1.x):
   pulling an external resource.
 - Inline ``<script>`` (no ``src``) is content, not an import — even
   ``<script type="module">import './x.js'</script>``. Inline JS bodies
-  go to ``noise_regions``; the agent reads them with ``--include-noise``.
+  go to ``noise_regions`` (kind ``"string"``, visible in grep output).
 - ``data-*`` and ``aria-*`` attributes are not promoted to the
   significant-attribute whitelist (would over-inflate the bracketed
   selectors). ``role="…"`` similarly omitted — landmark elements are

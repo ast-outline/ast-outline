@@ -174,6 +174,7 @@ class PhpAdapter:
     comment_line_prefixes = ('//', '#')
     import_line_prefixes = ('use ', 'require ', 'require_once ', 'include ', 'include_once ')
     render_family = "code"
+    shebang_programs = frozenset({"php"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

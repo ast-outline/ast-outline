@@ -85,8 +85,10 @@ you already know the symbol:
    class/function. Definitions are tagged `[def]`, imports `[import]`;
    calls and refs carry no tag (inferable from `(` after symbol).
    Use for "where is X defined", "who calls Y", "is Z dead code" —
-   scope in the output spares follow-up reads. Comments and strings
-   filtered. Batch via repeatable `-e`:
+   scope in the output spares follow-up reads. Comments filtered;
+   string literals searched and tagged `[string]`, so config keys,
+   translation strings and reflection targets are found too. Batch
+   via repeatable `-e`:
    `ast-outline grep User.save -e User.load -e User.delete src/`.
    Narrow by classification with `--kind def|call|ref|import` (also
    accepts `--kind def,call`) — drops the post-filter step when you

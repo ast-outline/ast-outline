@@ -24,8 +24,11 @@ from .adapters import (
     CollectResult,
     collect_files_with_stats,
     get_adapter_for,
+    shebang_interpreter,
+    supported_basenames,
     supported_extensions,
     supported_languages,
+    supported_shebang_programs,
 )
 from .core import (
     DigestOptions,
@@ -111,6 +114,92 @@ def _cross_command_flag_hint(
     if not hints:
         return ""
     return "; ".join(hints)
+
+
+# `show`-only flags stripped when a symbol-less `show` is repaired into
+# `outline`. Value-taking ones (--view) drop their value token too.
+_SHOW_ONLY_FLAGS = frozenset({"--signature", "--full", "--no-doc"})
+_SHOW_ONLY_VALUE_FLAGS = frozenset({"--view"})
+
+
+def _repair_argv(message: str, argv: list[str]) -> tuple[list[str], str] | None:
+    """One-shot repair for arg failures with a single obvious reading.
+
+    The cross-command hint (above) tells the agent what it got wrong —
+    but acting on it still costs the agent a full extra turn, and
+    usage-history shows these exact confusions are frequent (83×
+    ``outline --format``, 42× symbol-less ``show``, habitual grep
+    ``-r``/``-n``). When the intent is unambiguous, run it instead of
+    explaining it; a ``# note:`` documents the substitution so nothing
+    happens silently. Repairs are deliberately limited to the observed
+    cases — anything else falls through to the normal failure note.
+    Returns ``(new_argv, note)`` or ``None``.
+    """
+    # By the time parsing fails, ``main`` has already normalized the
+    # bare default-outline form (``ast-outline FILE …`` → ``outline
+    # FILE …``), so ``argv[0]`` here is always a subcommand.
+    invoked = argv[0] if argv and argv[0] in SUBCOMMANDS else None
+    is_outline = invoked == "outline"
+    prefix = "unrecognized arguments: "
+    if message.startswith(prefix):
+        unknown = message[len(prefix):].split()
+        flags = {t.split("=", 1)[0] for t in unknown if t.startswith("-")}
+        if not flags:
+            return None
+        rest = argv[1:]
+        if is_outline and flags <= {"--format", "--oneline"}:
+            # The agent asked outline for a digest format preset — the
+            # preset names the output it wants, so give it that output.
+            return (
+                ["digest"] + rest,
+                "`--format` / `--oneline` are `digest` flags — ran "
+                "`digest` on the same paths instead (outline has no "
+                "format presets)",
+            )
+        if is_outline and flags == {"--signature"}:
+            new_argv = [a for a in argv if a != "--signature"]
+            return (
+                new_argv,
+                "`--signature` is a `show` flag; outline output is "
+                "already signature-level — flag ignored",
+            )
+        if invoked == "grep" and flags <= {"-r", "-n", "-rn", "-nr"}:
+            # rg / POSIX grep habits: recursion and line numbers are
+            # both always on here, the flags change nothing.
+            new_argv = [a for a in argv if a not in ("-r", "-n", "-rn", "-nr")]
+            return (
+                new_argv,
+                "`-r` / `-n` are implicit in ast-outline grep "
+                "(directories always walked recursively, line numbers "
+                "always shown) — ignored",
+            )
+        return None
+    if (
+        invoked == "show"
+        and "the following arguments are required: symbols" in message
+    ):
+        # `show FILE` without a symbol: the agent wants to see what's in
+        # the file — that's `outline`. Show-only flags are stripped so
+        # the repaired call can't fail a second time on them.
+        rest: list[str] = []
+        skip_next = False
+        for a in argv[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if a.split("=", 1)[0] in _SHOW_ONLY_VALUE_FLAGS:
+                skip_next = "=" not in a
+                continue
+            if a in _SHOW_ONLY_FLAGS:
+                continue
+            rest.append(a)
+        return (
+            ["outline"] + rest,
+            "`show` needs a symbol name — printed the file's outline "
+            "instead; pick a symbol from it and re-run "
+            "`show <file> <symbol>` for its body",
+        )
+    return None
 
 
 # Grep flags that consume a value as the next argv token. Used by
@@ -443,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     p_grep.add_argument(
         "--include-noise",
         action="store_true",
-        help="Include matches inside comments and strings (filtered by default)",
+        help="Include matches inside comments (hidden by default; string literals are always searched)",
     )
     p_grep.add_argument(
         "--no-ignore",
@@ -479,8 +568,8 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KIND",
         help="Filter matches by kind: def | call | ref | import | "
              "comment | string. Repeatable (--kind def --kind call) or "
-             "comma-separated (--kind def,call). When 'comment' or "
-             "'string' are included, --include-noise is auto-enabled.",
+             "comma-separated (--kind def,call). When 'comment' is "
+             "included, --include-noise is auto-enabled.",
     )
     output_mode = p_grep.add_mutually_exclusive_group()
     output_mode.add_argument(
@@ -505,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
              "modes don't (paths and counts are derivable from the JSON).",
     )
 
+    repair_note: str | None = None
     try:
         args = parser.parse_args(argv)
     except _ArgParseFail as e:
@@ -512,16 +602,40 @@ def main(argv: list[str] | None = None) -> int:
         # exit cleanly so a parallel batch isn't aborted by exit code 2.
         msg = str(e)
         hint = _cross_command_flag_hint(parser, msg, argv)
-        # `args` doesn't exist — argparse failed before producing it.
-        # Detect `--json` directly in argv so a malformed JSON-mode
-        # invocation still gets a valid JSON error document.
-        if "--json" in argv:
-            cmd = argv[0] if argv and argv[0] in SUBCOMMANDS else None
-            print(json_output.error_json(cmd, [msg], hint or None))
+
+        def _emit_parse_failure() -> int:
+            # `args` doesn't exist — argparse failed before producing
+            # it. Detect `--json` directly in argv so a malformed
+            # JSON-mode invocation still gets a valid JSON error
+            # document.
+            if "--json" in argv:
+                cmd = argv[0] if argv and argv[0] in SUBCOMMANDS else None
+                print(json_output.error_json(cmd, [msg], hint or None))
+                return 0
+            suffix = f" (hint: {hint})" if hint else ""
+            print(f"# note: {msg}{suffix}")
             return 0
-        suffix = f" (hint: {hint})" if hint else ""
-        print(f"# note: {msg}{suffix}")
-        return 0
+
+        # Forgiveness layer: when the mistaken invocation has exactly
+        # one sensible reading, run that reading and note the
+        # substitution instead of bouncing the agent for a retry turn.
+        # Text mode only — a repair note line before a JSON document
+        # would break consumers parsing stdout as JSON, and threading
+        # it into every command's envelope isn't worth the plumbing.
+        repaired = None if "--json" in argv else _repair_argv(msg, argv)
+        if repaired is None:
+            return _emit_parse_failure()
+        new_argv, repair_note = repaired
+        try:
+            args = parser.parse_args(new_argv)
+        except _ArgParseFail:
+            # The repair didn't parse either (extra unknown flags in the
+            # same call) — report the ORIGINAL failure, one repair
+            # attempt only.
+            return _emit_parse_failure()
+
+    if repair_note:
+        print(f"# note: {repair_note}")
 
     if args.cmd == "help":
         _print_guide(getattr(args, "topic", None))
@@ -708,6 +822,42 @@ def _ignore_note(collected: CollectResult, exclude_active: bool = False) -> str 
     )
 
 
+def _extensionless_skip_note(paths: list[Path]) -> str | None:
+    """Explain why an explicit extensionless file input produced
+    nothing, or ``None`` when no input fits.
+
+    Reached only from the empty-result branches, where every input is
+    already known to have been skipped — so any extensionless regular
+    file among them is one that shebang detection just failed on.
+    Without this line the agent sees only the supported-extensions
+    list, concludes the file class is unsupported, and reinvents the
+    symlink-to-``/tmp/x.py`` workaround instead of fixing the actual
+    problem (no/foreign shebang).
+    """
+    recognized = supported_shebang_programs()
+    for p in paths:
+        if not p.is_file() or p.suffix:
+            continue
+        program = shebang_interpreter(p)
+        if program in recognized:
+            # Detection succeeded — whatever emptied the result, it
+            # wasn't this file's language (e.g. grep simply found no
+            # matches in a recognized script).
+            continue
+        supported = ", ".join(recognized)
+        if program:
+            return (
+                f"'{p}' is extensionless and its shebang interpreter "
+                f"'{program}' is not supported (recognized: {supported})"
+            )
+        return (
+            f"'{p}' is extensionless and has no shebang line — "
+            f"extensionless files are detected via shebang "
+            f"(recognized interpreters: {supported})"
+        )
+    return None
+
+
 def _strip_note_prefix(s: str) -> str:
     """Drop a leading `# note: ` / `# hint: ` marker if present.
 
@@ -799,11 +949,17 @@ def _cmd_outline(args) -> int:
             # you wanted was filtered" trap — surface the filter so the
             # agent doesn't think the path is empty.
             return _emit_error(json_mode, "outline", [note])
+        skip_note = _extensionless_skip_note(paths)
+        if skip_note and all(p.is_file() and not p.suffix for p in paths):
+            # Every input is an extensionless file — the supported-
+            # extensions list would only mislead (the problem is the
+            # shebang, not the suffix), so the specific note rides alone.
+            return _emit_error(json_mode, "outline", [skip_note])
         exts = sorted(supported_extensions())
-        return _emit_error(
-            json_mode, "outline",
-            [f"no files found matching supported extensions: {exts}"],
-        )
+        notes = [f"no files found matching supported extensions: {exts}"]
+        if skip_note:
+            notes.append(skip_note)
+        return _emit_error(json_mode, "outline", notes)
 
     note = _ignore_note(collected, exclude_active=bool(exclude))
     if json_mode:
@@ -891,57 +1047,98 @@ def _looks_like_glob(s: str) -> bool:
     return any(ch in s for ch in "*?[")
 
 
-def _resolve_symbols_across(args, search_paths, *, no_ignore, exclude):
-    """Locate each requested symbol's definition(s) across ``search_paths``.
+def _resolve_one_symbol(symbol, search_paths, *, no_ignore, exclude):
+    """Locate one symbol's definition(s) across ``search_paths``.
 
-    ``search_paths`` is the list handed to ``grep`` — a single directory
-    (``show DIR sym``) or the files a glob expanded to (``show
-    "src/**/*.cs" sym``); ``grep`` walks directories and takes explicit
-    files alike. Reuses the grep file-walk + ``def`` classifier as a
-    cheap pre-filter (it reads every file but only parses the few with a
-    positional hit), then runs the authoritative ``find_symbols``
-    resolver on just those candidate files. Returns a list of
-    ``(symbol, found, suggestions)`` in input order, where ``found`` is a
-    list of ``(file_path, SymbolMatch)`` and ``suggestions`` is the
+    ``search_paths`` is the list handed to ``grep`` — a directory, the
+    files a glob expanded to, or an explicit sibling-file list; ``grep``
+    walks directories and takes explicit files alike. Reuses the grep
+    file-walk + ``def`` classifier as a cheap pre-filter (it reads every
+    file but only parses the few with a positional hit), then runs the
+    authoritative ``find_symbols`` resolver on just those candidate
+    files. Returns ``(found, suggestions)``, where ``found`` is a list
+    of ``(file_path, SymbolMatch)`` and ``suggestions`` is the
     did-you-mean pool (only populated when ``found`` is empty).
     """
     from .grep import grep, suggest_similar_symbols, KIND_DEF
 
-    resolved = []
-    for symbol in args.symbols:
-        name = _symbol_search_name(symbol)
-        # `grep <name> <paths> --kind def` — the exact pattern an agent
-        # would otherwise type as its second call. Literal (no
-        # word_match): we mirror that command's default, and
-        # `find_symbols` below exact-matches the name token, so a
-        # substring candidate like `MailSpecHelper` is collected cheaply
-        # then dropped precisely.
-        file_results, _ignored, _excluded = grep(
-            [name], search_paths,
-            kind_filter={KIND_DEF},
-            no_ignore=no_ignore,
-            exclude=exclude,
+    name = _symbol_search_name(symbol)
+    # `grep <name> <paths> --kind def` — the exact pattern an agent
+    # would otherwise type as its second call. Literal (no
+    # word_match): we mirror that command's default, and
+    # `find_symbols` below exact-matches the name token, so a
+    # substring candidate like `MailSpecHelper` is collected cheaply
+    # then dropped precisely.
+    file_results, _ignored, _excluded = grep(
+        [name], search_paths,
+        kind_filter={KIND_DEF},
+        no_ignore=no_ignore,
+        exclude=exclude,
+    )
+    found = []
+    for fr in file_results:
+        if not fr.matches:
+            continue
+        adapter = get_adapter_for(fr.path)
+        if adapter is None:
+            continue
+        try:
+            parsed = adapter.parse(fr.path)
+        except Exception:
+            continue
+        for m in find_symbols(parsed, symbol):
+            found.append((fr.path, m))
+    suggestions = []
+    if not found:
+        suggestions = suggest_similar_symbols(
+            symbol, search_paths, no_ignore=no_ignore, exclude=exclude
         )
-        found = []
-        for fr in file_results:
-            if not fr.matches:
-                continue
-            adapter = get_adapter_for(fr.path)
-            if adapter is None:
-                continue
-            try:
-                parsed = adapter.parse(fr.path)
-            except Exception:
-                continue
-            for m in find_symbols(parsed, symbol):
-                found.append((fr.path, m))
-        suggestions = []
-        if not found:
-            suggestions = suggest_similar_symbols(
-                symbol, search_paths, no_ignore=no_ignore, exclude=exclude
-            )
-        resolved.append((symbol, found, suggestions))
-    return resolved
+    return found, suggestions
+
+
+def _resolve_symbols_across(args, search_paths, *, no_ignore, exclude):
+    """`_resolve_one_symbol` over each requested symbol, in input order.
+
+    Returns a list of ``(symbol, found, suggestions)`` tuples.
+    """
+    return [
+        (symbol, *_resolve_one_symbol(
+            symbol, search_paths, no_ignore=no_ignore, exclude=exclude,
+        ))
+        for symbol in args.symbols
+    ]
+
+
+def _sibling_files(path: Path) -> list[Path]:
+    """Supported files sharing ``path``'s directory — the not-found
+    rescue scope for file-mode `show`.
+
+    One level only, no recursion: the dominant miss in real usage is
+    "right class, wrong file" — the agent guessed `ThingData.cs` while
+    the symbol lives in `ThingIdGenerator.cs` next to it — and the
+    same-directory scan resolves that without the cost or surprise of
+    walking a tree the agent explicitly did not ask about. Filtering is
+    by suffix/basename only (no shebang sniff): a script's directory
+    like ``~/.local/bin`` can hold hundreds of extensionless files, and
+    paying an ``open()`` per file to rescue a typo'd symbol would be
+    wildly out of proportion.
+    """
+    exts = supported_extensions()
+    basenames = supported_basenames()
+    try:
+        entries = sorted(path.parent.iterdir())
+        # Canonical identity, not name comparison: the queried path may
+        # be a symlink whose name differs from its target sitting in
+        # the same directory — searching that target twice (and never
+        # excluding it) would be wrong both ways.
+        target = path.resolve()
+        return [
+            f for f in entries
+            if f.is_file() and f.resolve() != target
+            and (f.suffix.lower() in exts or f.name in basenames)
+        ]
+    except OSError:
+        return []
 
 
 def _render_did_you_mean(suggestions) -> str:
@@ -957,8 +1154,10 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
 
     ``found`` is the list of ``(file_path, SymbolMatch)`` the resolver
     returned for one symbol. Each candidate is rendered as
-    ``path:line (kind)`` so the agent can re-run `show <file> <symbol>`
-    against exactly one of them.
+    ``path:start-end (kind)`` — the same shape as the body header
+    `show` itself prints — so the agent can re-run `show <file>
+    <symbol>` against exactly one of them, and the range lets it judge
+    body size before choosing (or slice the lines directly).
 
     Path form follows the channel convention: the **text** note uses
     cwd-relative paths (``display_path``), matching the rest of the text
@@ -969,7 +1168,8 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
     """
     render = str if absolute else display_path
     return ", ".join(
-        f"{render(fpath)}:{m.start_line} ({m.kind})" for fpath, m in found
+        f"{render(fpath)}:{m.start_line}-{m.end_line} ({m.kind})"
+        for fpath, m in found
     )
 
 
@@ -1091,6 +1291,15 @@ def _cmd_show(args) -> int:
         return _emit_error(json_mode, "show", [f"file not found: {path}"])
     adapter = get_adapter_for(path)
     if adapter is None:
+        if not path.suffix:
+            skip_note = _extensionless_skip_note([path])
+            # The fallback can't fire today (a recognized shebang would
+            # have resolved an adapter above) — it guards the exit-0
+            # invariant against future drift between the two checks.
+            return _emit_error(
+                json_mode, "show",
+                [skip_note or f"no adapter for {path.name}"],
+            )
         return _emit_error(
             json_mode, "show", [f"no adapter for extension {path.suffix}"]
         )
@@ -1101,13 +1310,61 @@ def _cmd_show(args) -> int:
             json_mode, "show", [f"parse error in {path}: {e}"]
         )
 
+    no_ignore = getattr(args, "no_ignore", False)
+    exclude = getattr(args, "exclude", []) or []
+    # Listed once per `show` call, lazily on the first miss — the list
+    # is identical for every missed symbol, and a fully-successful call
+    # never pays the iterdir().
+    sibling_cache: list[list[Path]] = []
+
+    def _rescue_nearby(symbol):
+        """Same-directory search for a symbol the requested file lacks.
+
+        The requested file rides along in the search list: its own
+        declaration names feed the did-you-mean pool (the typo case —
+        `onLand` for `OnLand` — is usually a typo against THIS file),
+        while `find_symbols`' exact matching guarantees it can't
+        re-surface as a "found" hit for the very name that just missed.
+        """
+        if not sibling_cache:
+            sibling_cache.append(_sibling_files(path))
+        siblings = sibling_cache[0]
+        if not siblings:
+            return [], []
+        return _resolve_one_symbol(
+            symbol, [path] + siblings, no_ignore=no_ignore, exclude=exclude,
+        )
+
     if json_mode:
         # One entry per queried name: not-found → empty matches list,
         # ambiguous → several matches. `--view` / `--no-doc` carry
         # through to each match's `source`, same as the text output.
+        # A not-found symbol that exists in a sibling file is pointed to
+        # via `notes` only: the structured `matches` are scoped to the
+        # requested `file` field, and a match from another file inside
+        # them would lie about its location.
         query_results = [(s, find_symbols(result, s)) for s in args.symbols]
+        notes = []
+        for symbol, matches in query_results:
+            if matches:
+                continue
+            found, suggestions = _rescue_nearby(symbol)
+            if found:
+                tail = "it" if len(found) == 1 else "one of them"
+                notes.append(
+                    f"'{symbol}' is not in {path} but is defined in the "
+                    f"same directory: "
+                    f"{_render_show_candidates(found, absolute=True)} "
+                    f"— re-run show against {tail}"
+                )
+            elif suggestions:
+                notes.append(
+                    f"did you mean (for {symbol}): "
+                    f"{_render_did_you_mean(suggestions)}?"
+                )
         print(json_output.show_json(
-            str(path), query_results, view=args.view, no_doc=args.no_doc
+            str(path), query_results, view=args.view, no_doc=args.no_doc,
+            notes=notes,
         ))
         return 0
 
@@ -1119,6 +1376,26 @@ def _cmd_show(args) -> int:
             # LLM is iterating over these to assemble its answer; it should
             # see "not found" inline next to the matches that did succeed.
             print(f"# note: symbol not found: {symbol} in {display_path(path)}")
+            # Same-directory rescue: the dominant real-world miss is a
+            # right-class-wrong-file guess, and the agent's next move was
+            # a generic grep over the parent dir. The rescue only ever
+            # POINTS — `path:start-end (kind)` candidates, never a body from a
+            # file the agent didn't ask for: the agent requested THIS
+            # file, and silently substituting another's source would put
+            # unasked-for code where it expects its target.
+            found, suggestions = _rescue_nearby(symbol)
+            if found:
+                tail = "it" if len(found) == 1 else "one of them"
+                print(
+                    f"# hint: defined in the same directory: "
+                    f"{_render_show_candidates(found)} "
+                    f"— re-run show against {tail}"
+                )
+            elif suggestions:
+                print(
+                    f"# hint: did you mean: "
+                    f"{_render_did_you_mean(suggestions)}?"
+                )
             continue
         if len(matches) > 1:
             # Disambiguation summary — informational, but still useful for
@@ -1294,9 +1571,9 @@ def _cmd_grep(args) -> int:
     # and comma-separated (``--kind def,call``) forms — agents fluent in
     # ``rg --type`` reach for either, and supporting both costs nothing.
     # Normalize, validate, then auto-enable ``--include-noise`` when the
-    # filter explicitly asks for ``comment``/``string`` (otherwise the
-    # noise filter zeroes them out before the kind filter ever sees them
-    # — silently giving the user empty results).
+    # filter explicitly asks for ``comment`` (otherwise the noise filter
+    # zeroes it out before the kind filter ever sees it — silently
+    # giving the user empty results).
     kind_filter: set[str] | None = None
     include_noise = args.include_noise
     if args.kind:
@@ -1319,7 +1596,7 @@ def _cmd_grep(args) -> int:
                  f"valid: {sorted(valid)}"],
             )
         kind_filter = kinds
-        if kinds & {KIND_COMMENT, KIND_STRING}:
+        if KIND_COMMENT in kinds:
             include_noise = True
     elif auto_kind_def:
         # Keyword-strip set no explicit ``--kind`` but the pattern was a
@@ -1340,14 +1617,22 @@ def _cmd_grep(args) -> int:
         kind_filter=kind_filter,
     )
     if not file_results:
+        # An explicit extensionless input whose language couldn't be
+        # detected was silently skipped by the search — without this
+        # note "no matches" reads as "searched and found nothing",
+        # which is a different (and misleading) claim.
+        skip_note = _extensionless_skip_note(paths)
         # Zero matches is a valid empty result, not an error: JSON mode
         # emits a normal envelope with an empty `files` array. The text
         # `# hint:` nudges below are interactive guidance, omitted here.
         if json_mode:
-            print(json_output.grep_json([], notes=advisory_notes))
+            notes = advisory_notes + ([skip_note] if skip_note else [])
+            print(json_output.grep_json([], notes=notes))
             return 0
         shown = patterns[0] if len(patterns) == 1 else f"{len(patterns)} patterns"
         print(f"# note: no matches for {shown!r}")
+        if skip_note:
+            print(f"# note: {skip_note}")
         # Universal kind-filter hint: when ``--kind`` was the only thing
         # standing between the agent and a real result, tell them so
         # they can fix it in one retry instead of binary-searching.
@@ -1510,7 +1795,15 @@ def _cmd_digest(args) -> int:
         note = _ignore_note(collected, exclude_active=bool(exclude))
         if note:
             return _emit_error(json_mode, "digest", [note])
-        return _emit_error(json_mode, "digest", ["no supported files found"])
+        skip_note = _extensionless_skip_note(paths)
+        if skip_note and all(p.is_file() and not p.suffix for p in paths):
+            # See _cmd_outline: all-extensionless input gets the
+            # specific shebang note alone, without the generic line.
+            return _emit_error(json_mode, "digest", [skip_note])
+        notes = ["no supported files found"]
+        if skip_note:
+            notes.append(skip_note)
+        return _emit_error(json_mode, "digest", notes)
     note = _ignore_note(collected, exclude_active=bool(exclude))
     if json_mode:
         advisory = [_strip_note_prefix(note)] if note else []
@@ -1669,10 +1962,14 @@ DIRECTORY / GLOB TARGET — find + show in one call
       `# note: found 'MailSpec' (class) in <path>`.
     - Defined in several files → prints NO body; lists the candidate
       locations instead: `# note: N definitions of 'MailSpec' — re-run
-      with one of: a.cs:12 (class), b.cs:5 (class)`. (`show` prints code
-      OR a pointer, never both — re-run against one file to read it.)
-    - Not found → `# note: symbol not found` (+ a did-you-mean hint when
-      a close name exists). Always exits 0.
+      with one of: a.cs:12-40 (class), b.cs:5-19 (class)`. (`show`
+      prints code OR a pointer, never both — re-run against one file
+      to read it.)
+    - Not found → `# note: symbol not found`. When the definition lives
+      in another file of the same directory, a hint points to it
+      (`# hint: defined in the same directory: <path>:<start>-<end>
+      (<kind>)`); otherwise a did-you-mean hint fires when a close name
+      exists. Always exits 0.
     A DIRECTORY search honors .gitignore/.ignore like `grep`/`digest`
     (use --no-ignore / --exclude to adjust). A GLOB is expanded
     literally — it shows exactly the files the pattern matches, with no
@@ -1857,17 +2154,18 @@ USAGE
 WHAT IT DOES
     Like ripgrep, but each match is annotated with:
       - the enclosing class/function chain (where it sits structurally),
-      - a kind tag for definitions ([def]) and imports ([import]).
-        Calls and refs are unmarked — the line shape (identifier
-        followed by `(` or not) makes them obvious.
-    Matches inside comments and strings are filtered by default;
-    when surfaced via --include-noise they carry [comment]/[string].
+      - a kind tag for definitions ([def]), imports ([import]) and
+        string-literal hits ([string]). Calls and refs are unmarked —
+        the line shape (identifier followed by `(` or not) makes
+        them obvious.
+    Matches inside comments are hidden by default; --include-noise
+    surfaces them tagged [comment]. String literals are always
+    searched — strings are program data (dict/config/translation
+    keys, asset paths, reflection targets), so a hit there is a real
+    answer, not noise.
     Designed for LLM agents asking "where is X used", "who calls Y",
     "is Z dead code" — answers them in one call without follow-up
     file reads.
-
-Not a replacement for ripgrep on non-symbol patterns (TODO comments,
-log strings, regex queries) — fall back to `rg` for those.
 
 FLAGS
     -e, --expression PAT    Additional pattern (repeatable; combines
@@ -1890,13 +2188,13 @@ FLAGS
                             def | call | ref | import | comment | string.
                             Repeatable (--kind def --kind call) or
                             comma-separated (--kind def,call). When
-                            comment/string included, --include-noise
-                            is auto-enabled.
+                            comment is included, --include-noise is
+                            auto-enabled.
     --regex                 Treat all patterns as regular expressions
                             instead of literal substrings
     -i, --case-insensitive  Case-insensitive match
-    --include-noise         Include matches inside comments / strings
-                            (filtered by default)
+    --include-noise         Include matches inside comments (hidden
+                            by default; strings always searched)
     --no-ignore             Disable .gitignore / .ignore filtering
     --exclude GLOB          Skip paths matching gitwildmatch GLOB
                             (.gitignore syntax; repeatable; anchored
@@ -1933,11 +2231,11 @@ OUTPUT FORMAT
 
     Match line:  > L<line>: <code>[ <kind-tag>]
     Tagged kinds: [def] (function/class/variable definition),
-    [import] (import statement). Calls and refs are untagged
-    (inferable from line shape). [comment] and [string] only
-    appear with --include-noise. Multi-pattern searches combine
-    matches into a single output — read the line content to see
-    which pattern hit.
+    [import] (import statement), [string] (hit inside a string
+    literal). Calls and refs are untagged (inferable from line
+    shape). [comment] only appears with --include-noise.
+    Multi-pattern searches combine matches into a single output —
+    read the line content to see which pattern hit.
 
 NOT TO BE CONFUSED WITH
     `ast-grep` — a separate Rust tool for structural codemods using

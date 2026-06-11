@@ -283,6 +283,7 @@ class RubyAdapter:
     # territory. ``Gemfile.lock`` is intentionally absent: it's not
     # Ruby source, just a serialisation format.
     basenames = {"Rakefile", "Gemfile"}
+    shebang_programs = frozenset({"ruby"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

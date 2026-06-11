@@ -244,40 +244,46 @@ def test_noise_regions_exclude_fence_delimiters_and_info_string(md_dir):
         assert not body.startswith(b"python")
 
 
-def test_grep_filters_matches_inside_fenced_code_block(md_dir):
-    """Matches inside fenced code blocks vanish under default noise filter."""
+def test_grep_shows_fenced_code_block_matches_tagged_string(md_dir):
+    """Matches inside fenced code blocks surface, tagged ``string``.
+
+    For an agent searching docs, the example code is usually exactly
+    the answer ("how is useState called") — fences follow the
+    strings-visible default. HTML comments stay hidden.
+    """
     path = md_dir / "grep_noise.md"
     results, _ignored, _excluded = grep("useState", [path])
-    # Pattern lives in both prose and fenced examples — prose hits stay,
-    # the fence content gets filtered.
-    assert results, "expected at least the prose matches to survive"
+    assert results
     fr = results[0]
-    visible_lines = {m.line for m in fr.matches}
-    # Every visible match line should be prose, never inside a fence
-    # or an HTML comment.
+    by_line = {m.line: m for m in fr.matches}
     src_lines = path.read_text().splitlines()
-    for line_no in visible_lines:
-        line = src_lines[line_no - 1]
-        assert "useState(0)" not in line
-        assert 'useState = "this is python' not in line
-        # Also no HTML-comment leakage now that those are noise-filtered.
-        assert not line.lstrip().startswith("<!--")
-        assert "TODO: revisit useState" not in line
-    # Filtered count tracks how many were swallowed.
+    # Fence hits are visible and tagged string.
+    fence_lines = [
+        n for n, line in enumerate(src_lines, 1)
+        if "useState(0)" in line or 'useState = "this is python' in line
+    ]
+    for n in fence_lines:
+        assert n in by_line, f"fence line {n} should be visible"
+        assert by_line[n].kind == "string"
+    # HTML comments remain hidden.
+    for n, line in enumerate(src_lines, 1):
+        if "TODO: revisit useState" in line or line.lstrip().startswith("<!--"):
+            assert n not in by_line
     assert fr.filtered_count > 0
 
 
-def test_grep_include_noise_surfaces_fenced_block_matches(md_dir):
-    """``include_noise=True`` re-surfaces matches inside fenced blocks."""
+def test_grep_include_noise_surfaces_html_comment_matches(md_dir):
+    """``include_noise=True`` re-surfaces the HTML-comment hits — the
+    only category still hidden by default."""
     path = md_dir / "grep_noise.md"
     visible_default, _, _ = grep("useState", [path])
     all_with_noise, _, _ = grep("useState", [path], include_noise=True)
-    # Strictly more matches with noise enabled — the previously filtered
-    # in-fence hits show up.
-    assert (
+    # Exactly the comment hits are the difference.
+    delta = (
         sum(len(fr.matches) for fr in all_with_noise)
-        > sum(len(fr.matches) for fr in visible_default)
+        - sum(len(fr.matches) for fr in visible_default)
     )
+    assert delta == visible_default[0].filtered_count > 0
 
 
 # --- noise_regions for HTML block comments -------------------------------
@@ -355,30 +361,29 @@ def test_grep_noise_fixture_snapshot_default(md_dir):
     fr = results[0]
     visible = {(m.line, m.column): m for m in fr.matches}
 
-    # Visible (prose / structural mentions): line numbers only — column
-    # checks would couple too tightly to fixture wording. The shape we
-    # care about is "this LINE was kept", not "this column survived".
+    # Visible: line numbers only — column checks would couple too
+    # tightly to fixture wording. The shape we care about is "this
+    # LINE was kept", not "this column survived". Strings-visible
+    # default: prose, fence content and string-heuristic lines all
+    # surface; only the HTML comments stay hidden.
     visible_lines = {line for line, _col in visible}
     expected_visible_lines = {
-        3,   # H1-blurb prose
-        7,   # ## Basic usage prose
-        30,  # closing prose
-        39,  # <div> prose mention (one of two on this line)
+        3,   # H1-blurb prose [ref]
+        7,   # ## Basic usage prose [ref]
+        10,  # JS fence import line [string]
+        13,  # JS fence useState(0) call [string]
+        18,  # prose with apostrophe — line-heuristic [string]
+        22,  # prose with apostrophe — line-heuristic [string]
+        26,  # Python fence assignment [string]
+        27,  # Python fence print [string]
+        30,  # closing prose [ref]
+        39,  # <div>: data-attr value [string] + prose mention [ref]
     }
     assert visible_lines == expected_visible_lines
-
-    # Filtered count covers every match the default mode swallowed.
-    # 6 in-fence (4 useState in JS block + 2 in Python block)
-    # 3 in-HTML-comment (1 multi-line TODO + 1 multi-line NOTE + 1 inline)
-    #   Wait — the inline single-line `<!-- useState: ... -->` is one
-    #   block-level comment with one useState; the multi-line block has
-    #   two (TODO line + nothing useState on NOTE line). So 1 + 1 = 2
-    #   from HTML comments. Plus the per-line string heuristic catches
-    #   apostrophe-bearing prose lines (L18, L22) and the `<div>` data-
-    #   attr value (L39). That's 2 + 2 + 1 = 5 string-flavored hits.
-    # Total: 6 fenced + 2 html-comment + 5 line-string = 13.
-    # Visible = 4. Filtered = 13 - 4 = 9.
-    assert fr.filtered_count == 9
+    # 11 matches total (two on L39); only the 2 HTML-comment hits
+    # (multi-line TODO + single-line inline) are swallowed.
+    assert len(fr.matches) == 11
+    assert fr.filtered_count == 2
 
 
 def test_grep_noise_fixture_snapshot_include_noise(md_dir):
@@ -387,7 +392,7 @@ def test_grep_noise_fixture_snapshot_include_noise(md_dir):
     path = md_dir / "grep_noise.md"
     results, _, _ = grep("useState", [path], include_noise=True)
     fr = results[0]
-    # 4 visible + 9 filtered = 13 total when noise is surfaced.
+    # 11 visible by default + 2 hidden comment hits = 13 total.
     assert len(fr.matches) == 13
 
     kinds: dict[str, int] = {}

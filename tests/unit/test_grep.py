@@ -77,12 +77,18 @@ def test_grep_distinguishes_call_from_ref(tmp_path: Path) -> None:
     assert KIND_DEF in kinds
 
 
-def test_grep_filters_string_literals_by_default(tmp_path: Path) -> None:
-    """Matches inside string literals are filtered, counted, and not returned."""
+def test_grep_shows_string_literals_by_default(tmp_path: Path) -> None:
+    """Matches inside string literals are returned, tagged ``string``.
+
+    Strings are program data — config/translation keys, asset paths,
+    reflection targets — so a hit there is a real answer. Hiding it
+    produced the worst agent failure mode: a silent false "not used".
+    Only comments are noise-filtered by default.
+    """
     src = tmp_path / "mod.py"
     src.write_text(
         'def use():\n'
-        '    label = "save"\n'       # filtered — inside string
+        '    label = "save"\n'       # visible — tagged string
         '    save()\n'                # call — visible
         '\n'
         'def save():\n'
@@ -91,11 +97,36 @@ def test_grep_filters_string_literals_by_default(tmp_path: Path) -> None:
     results, _, _ = grep("save", [src])
     assert len(results) == 1
     fr = results[0]
-    assert fr.filtered_count == 1
+    assert fr.filtered_count == 0
     visible_kinds = [m.kind for m in fr.matches]
-    assert KIND_STRING not in visible_kinds
+    assert KIND_STRING in visible_kinds
     assert KIND_CALL in visible_kinds
     assert KIND_DEF in visible_kinds
+
+
+def test_grep_finds_translation_keys_in_string_literals(tmp_path: Path) -> None:
+    """The motivating case for the strings-visible default: locale/UI
+    content lives in string literals, and identifier-like patterns
+    (`embertide`) or non-ASCII ones (`День`) must find it. Under the
+    old strings-hidden default these searches returned a false
+    "no matches" and agents fled to raw grep.
+    """
+    src = tmp_path / "locale.ts"
+    src.write_text(
+        'export const ru = {\n'
+        '  fire: "Раздув углей",\n'
+        '  embertide: "Embertide event",\n'
+        '  day: "День 1",\n'
+        '};\n'
+    )
+    # Values inside string literals — the previously-hidden class.
+    for pattern in ("День", "Раздув углей", "Embertide event"):
+        results, _, _ = grep(pattern, [src])
+        assert results, f"pattern {pattern!r} must match"
+        assert any(m.kind == KIND_STRING for m in results[0].matches), pattern
+    # The identifier-like key still matches as code, not as string.
+    results, _, _ = grep("embertide", [src])
+    assert results and results[0].matches
 
 
 def test_grep_filters_comments_by_default(tmp_path: Path) -> None:
@@ -369,7 +400,7 @@ def test_render_grep_includes_match_count_in_header(tmp_path: Path) -> None:
 
 
 def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> None:
-    """The 'matches in comments/strings hidden' footer renders only when the
+    """The 'in comments hidden' footer renders only when the
     file has NO visible matches — there the header reads '(0 matches)' and,
     without the footer, the agent would wrongly conclude the symbol is
     absent. When visible matches exist the footer is suppressed as noise;
@@ -383,7 +414,7 @@ def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> Non
     )
     results, _, _ = grep("save", [with_visible])
     out = render_grep(results)
-    assert "comments/strings hidden" not in out
+    assert "in comments hidden" not in out
     assert results[0].filtered_count == 1   # still tracked for JSON
 
     # Only a comment match, no visible match → footer present (the guard).
@@ -394,7 +425,7 @@ def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> Non
     )
     results2, _, _ = grep("save", [comment_only])
     out2 = render_grep(results2)
-    assert "1 matches in comments/strings hidden" in out2
+    assert "1 match in comments hidden" in out2
     assert "--include-noise" in out2
 
 
@@ -792,19 +823,20 @@ def test_grep_nested_generic_call(tmp_path: Path) -> None:
 # --- multi-line string filtering (Python docstrings) ---------------------
 
 
-def test_grep_filters_python_docstring_matches(tmp_path: Path) -> None:
-    """Matches inside a triple-quoted Python docstring are filtered.
+def test_grep_python_docstring_matches_tagged_string(tmp_path: Path) -> None:
+    """Matches inside a triple-quoted Python docstring surface as ``string``.
 
-    Single-line quote-counting heuristics can't see across line
-    boundaries; this test pins the tree-sitter-backed filtering that
-    Python adapter populates via ``ParseResult.noise_regions``.
+    A docstring IS a string literal — it follows the strings-visible
+    default. The multi-line region detection is tree-sitter-backed
+    (``ParseResult.noise_regions``), so the tag is exact even where the
+    single-line quote-counting heuristic can't see.
     """
     src = tmp_path / "mod.py"
     src.write_text(
         'def use():\n'
         '    """\n'
-        '    Calls save() to persist.\n'   # filtered — inside docstring
-        '    Mentions save in prose.\n'    # filtered
+        '    Calls save() to persist.\n'   # visible — tagged string
+        '    Mentions save in prose.\n'    # visible — tagged string
         '    """\n'
         '    save()\n'                      # visible — real call
         '\n'
@@ -813,16 +845,16 @@ def test_grep_filters_python_docstring_matches(tmp_path: Path) -> None:
     )
     results, _, _ = grep("save", [src])
     fr = results[0]
-    # Two matches inside the docstring should be filtered.
-    assert fr.filtered_count == 2
+    assert fr.filtered_count == 0
     visible_kinds = [m.kind for m in fr.matches]
-    assert KIND_STRING not in visible_kinds
+    assert visible_kinds.count(KIND_STRING) == 2
     assert KIND_CALL in visible_kinds
     assert KIND_DEF in visible_kinds
 
 
-def test_grep_module_docstring_doesnt_pollute_results(tmp_path: Path) -> None:
-    """A module-level docstring referencing the symbol shouldn't surface."""
+def test_grep_module_docstring_surfaces_tagged_string(tmp_path: Path) -> None:
+    """A module-docstring hit is visible but clearly labeled ``string`` —
+    the tag lets the agent discount it as prose without losing it."""
     src = tmp_path / "mod.py"
     src.write_text(
         '"""Module that uses User everywhere."""\n'
@@ -833,8 +865,9 @@ def test_grep_module_docstring_doesnt_pollute_results(tmp_path: Path) -> None:
     )
     results, _, _ = grep("User", [src])
     fr = results[0]
-    assert fr.filtered_count == 1
+    assert fr.filtered_count == 0
     visible_kinds = [m.kind for m in fr.matches]
+    assert KIND_STRING in visible_kinds
     assert KIND_IMPORT in visible_kinds
     assert KIND_CALL in visible_kinds
 
@@ -860,9 +893,11 @@ def test_grep_triple_quote_in_code_doesnt_break_filtering(tmp_path: Path) -> Non
     )
     results, _, _ = grep("save", [src])
     fr = results[0]
-    # The match inside the docstring is filtered, save() and def save remain.
-    assert fr.filtered_count == 1
+    # The docstring hit is visible and exactly tagged ``string`` — the
+    # region boundaries (not the visibility) are what this test pins.
+    assert fr.filtered_count == 0
     kinds = [m.kind for m in fr.matches]
+    assert kinds.count(KIND_STRING) == 1
     assert KIND_CALL in kinds
     assert KIND_DEF in kinds
 
@@ -1303,14 +1338,15 @@ def test_grep_max_count_no_op_when_under_cap(tmp_path: Path) -> None:
 def test_grep_max_count_applies_after_noise_filter(tmp_path: Path) -> None:
     """Cap counts visible matches, not pre-filtered noise.
 
-    The 4 string matches are filtered first; cap=2 then keeps both real
+    The 4 comment matches are filtered first; cap=2 then keeps both real
     matches without truncation. Critical for LLMs — otherwise ``-m 2``
-    on a docstring-heavy file might silently return 0 visible matches
+    on a comment-heavy file might silently return 0 visible matches
     while reporting "2 cap reached".
     """
     src = tmp_path / "mod.py"
     src.write_text(
-        '"""mentions save save save save in docstring"""\n'
+        "# save save\n"
+        "# save save\n"
         "def use():\n"
         "    save()\n"
         "    save()\n"
@@ -1511,12 +1547,14 @@ def test_grep_kind_filter_suppresses_noise_footer_when_irrelevant(
         "def use():\n"
         "    save()\n"
     )
-    # Filter to imports only — comment + docstring matches are noise that
-    # the user has implicitly opted out of by narrowing scope.
+    # Filter to imports only. The comment hit is doubly excluded (noise
+    # filter + kind narrow) so it rides ``kind_excluded``, not
+    # ``filtered_count`` — the "--include-noise to see" footer would
+    # be misleading under a non-comment --kind narrow.
     results, _, _ = grep("save", [src], kind_filter={KIND_IMPORT})
     fr = results[0]
     assert fr.filtered_count == 0  # footer wouldn't render — accurate
-    # Sanity: without kind filter, the same file would surface noise.
+    # Sanity: without kind filter, the comment hit IS counted as hidden.
     results_no_filter, _, _ = grep("save", [src])
     assert results_no_filter[0].filtered_count > 0
 

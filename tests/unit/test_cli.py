@@ -173,18 +173,19 @@ def test_render_show_candidates_path_form():
     — so the JSON prose matches the structured ``file`` field in the same
     envelope (JSON-is-absolute, text-is-cwd-relative). A path *under* cwd
     is used so the two forms genuinely differ; the helper reads only
-    ``start_line`` / ``kind``, so a lightweight stand-in suffices."""
+    ``start_line`` / ``end_line`` / ``kind``, so a lightweight stand-in
+    suffices."""
     from pathlib import Path
     from types import SimpleNamespace
 
     from ast_outline.cli import _render_show_candidates
 
     p = Path.cwd() / "pkg" / "mod.py"
-    found = [(p, SimpleNamespace(start_line=10, kind="class"))]
+    found = [(p, SimpleNamespace(start_line=10, end_line=24, kind="class"))]
     # Text note: cwd-relative.
-    assert _render_show_candidates(found) == "pkg/mod.py:10 (class)"
+    assert _render_show_candidates(found) == "pkg/mod.py:10-24 (class)"
     # JSON note: absolute, matching the structured `file` field.
-    assert _render_show_candidates(found, absolute=True) == f"{p}:10 (class)"
+    assert _render_show_candidates(found, absolute=True) == f"{p}:10-24 (class)"
 
 
 def test_show_not_found_returns_zero_with_note(csharp_dir, capsys):
@@ -905,17 +906,111 @@ def test_bad_subcommand_returns_zero_with_note(capsys):
     assert "# note:" in captured.out
 
 
-def test_cross_command_flag_hint_signature_on_outline(tmp_path, capsys):
-    """When an LLM passes a flag belonging to a sibling subcommand, the note
-    should name the right command instead of just "unrecognized arguments"."""
+def test_signature_on_outline_is_repaired_not_bounced(tmp_path, capsys):
+    """``outline --signature`` has one obvious reading (outline is already
+    signature-level), so the forgiveness layer runs the outline and notes
+    the ignored flag instead of bouncing the agent for a retry turn."""
     f = tmp_path / "sample.py"
     f.write_text("def foo():\n    pass\n")
     rc = main(["outline", str(f), "--signature"])
     captured = capsys.readouterr()
     assert rc == 0
     assert "# note:" in captured.out
-    assert "`--signature` is a flag of `show`" in captured.out
-    assert "not `outline`" in captured.out
+    assert "flag ignored" in captured.out
+    assert "def foo()" in captured.out  # the outline actually ran
+
+
+# --- Forgiveness layer: repaired invocations -------------------------------
+
+
+def test_outline_format_preset_repaired_to_digest(tmp_path, capsys):
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["outline", str(f), "--format=names"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "ran `digest`" in captured.out
+    assert "foo" in captured.out  # names preset actually rendered
+
+
+def test_default_outline_format_preset_repaired_to_digest(tmp_path, capsys):
+    """The bare ``ast-outline FILE --format=names`` form (no subcommand)
+    gets the same repair."""
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main([str(f), "--format=names"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "ran `digest`" in captured.out
+    assert "foo" in captured.out
+
+
+def test_show_without_symbol_repaired_to_outline(tmp_path, capsys):
+    f = tmp_path / "sample.py"
+    f.write_text("class Big:\n    def method(self):\n        pass\n")
+    rc = main(["show", str(f)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "needs a symbol name" in captured.out
+    assert "class Big" in captured.out  # outline of the file printed
+
+
+def test_show_without_symbol_with_show_only_flag_still_repaired(tmp_path, capsys):
+    """Show-only flags are stripped during the repair so the substituted
+    outline call can't fail a second time on them."""
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["show", str(f), "--signature"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "needs a symbol name" in captured.out
+    assert "def foo()" in captured.out
+
+
+def test_grep_rn_flags_repaired(tmp_path, capsys):
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    foo()\n")
+    rc = main(["grep", "-rn", "foo", str(f)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "implicit" in captured.out
+    assert "## matches" in captured.out
+
+
+def test_unrepairable_flag_keeps_plain_failure_note(tmp_path, capsys):
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["outline", str(f), "--bogus"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "unrecognized arguments: --bogus" in captured.out
+    assert "def foo()" not in captured.out  # nothing was guessed and run
+
+
+def test_repair_skipped_in_json_mode(tmp_path, capsys):
+    """A repair note before a JSON document would break consumers parsing
+    stdout as JSON — JSON mode keeps the strict error envelope."""
+    import json as _json
+
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["outline", str(f), "--format=names", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    payload = _json.loads(captured.out)
+    assert "error" in payload
+
+
+def test_repair_aborts_when_extra_unknown_flags_remain(tmp_path, capsys):
+    """One repair attempt only: if the repaired argv still fails to parse,
+    the ORIGINAL failure is reported — no guess-chains."""
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["outline", str(f), "--signature", "--bogus"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "unrecognized arguments" in captured.out
+    assert "def foo()" not in captured.out
 
 
 def test_cross_command_flag_hint_absent_for_truly_unknown_flag(tmp_path, capsys):

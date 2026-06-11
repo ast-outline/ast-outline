@@ -7,6 +7,98 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.6.0] — 2026-06-11
+
+### Changed
+
+- **`grep` no longer hides string-literal matches by default — only
+  comments.** Strings are program data: dict/config/translation keys,
+  asset paths, `animator.Play("State")` reflection targets, embedded
+  shell in YAML `run: |` blocks, inline `<script>` bodies, fenced code
+  examples in Markdown, Python docstrings. Hiding a hit there produced
+  the worst agent failure mode — a silent false "not used" — and
+  usage-history analysis showed the cost: the "excluded N (string)"
+  hint converted 0 of 14 times, and agents ran 417 raw-grep searches
+  over locale/string-heavy files in sessions where ast-outline was
+  available, having learned it "can't see strings". String hits are
+  tagged `[string]`, so they remain easy to discount when irrelevant.
+  Comments stay hidden by default (commented-out code is the classic
+  false positive that misleads an agent into treating dead code as
+  live); `--include-noise` now means "also show comment matches", and
+  the `--kind comment` auto-enable is unchanged. A side fix for free:
+  prose lines that the single-line quote heuristic mislabels as
+  strings (an apostrophe in `Don't call useState…`) used to be hidden
+  — now they surface, merely with an imprecise tag.
+
+### Added
+
+- **Forgiveness layer for the frequent flag confusions.** When a
+  failed invocation has exactly one sensible reading, the CLI now runs
+  that reading and prefixes a `# note:` documenting the substitution,
+  instead of bouncing the agent for a retry turn: `outline
+  --format=…` / `--oneline` (incl. the bare `ast-outline FILE
+  --format=…` form) runs `digest` with that preset; `outline
+  --signature` ignores the flag (outline is already signature-level);
+  `show FILE` with no symbol prints the file's outline and tells the
+  agent to pick a symbol from it; `grep -r` / `-n` are accepted as
+  no-ops (recursion and line numbers are always on). One repair
+  attempt only — if the substituted argv still fails, the original
+  error is reported; JSON mode keeps the strict error envelope
+  (a note line before a JSON document would break parsers). Driven by
+  usage-history analysis: 83× `--format` on outline, 42× symbol-less
+  `show`, habitual `-r`/`-n` — each costing a full agent turn while
+  the intent was unambiguous.
+- **Shebang-based language detection for extensionless files.**
+  An explicit file argument with no extension is now resolved by its
+  `#!` line: `ast-outline outline ~/.local/bin/tg` works directly when
+  the file starts with `#!/usr/bin/env python3` (or any recognized
+  interpreter). Works uniformly across `outline` / `show` / `digest` /
+  `grep` — all four resolve adapters through the same dispatcher.
+  Driven by usage-history analysis: agents hit unix-convention CLI
+  scripts constantly and had invented a symlink-to-`/tmp/x.py`
+  workaround (177 setups, 537 calls through it) that was fragile and
+  cost 2–4 turns per session.
+  - `env` indirection is unwrapped (`-S` and other flags plus
+    `VAR=value` assignments are skipped); version suffixes are
+    normalized (`python3.13` → `python`, `lua5.4` → `lua`).
+  - Recognized interpreters are declared per adapter
+    (`shebang_programs`, same per-language-knowledge pattern as
+    `definition_keywords`): Python (`python`, `pypy`, and `uv` — the
+    `#!/usr/bin/env -S uv run --script` single-file-script form),
+    TypeScript/JavaScript (`node`, `deno`, `bun`, `ts-node`, `tsx`),
+    Ruby, Lua/LuaJIT, PHP, Swift.
+  - Scoped to explicit file inputs: directory walks still filter by
+    extension/basename and never pay the extra `open()`.
+- **Same-directory rescue on file-mode `show` miss.** When `show
+  <file> <symbol>` doesn't find the symbol in the file, the other
+  supported files of that directory (one level, no recursion) are
+  searched for its definition, and the miss note gains a pointer:
+  `# hint: defined in the same directory: <path>:<start>-<end>
+  (<kind>), … — re-run show against it / one of them`. The rescue only
+  ever points — it never prints a body from a file the agent didn't
+  ask for. No hit falls back to a did-you-mean pool built from the
+  file and its siblings (the typo case). In `--json`, rescue pointers
+  ride `notes` — the structured `matches` stay scoped to the requested
+  `file` field. Driven by usage-history analysis: 237 `symbol not
+  found` misses, the dominant cause being a right-class-wrong-file
+  guess (`ThingIdGenerator` asked of `ThingData.cs` while it lives in
+  `ThingIdGenerator.cs` next door), after which agents fell back to
+  generic grep over the parent dir.
+- **`show` candidate pointers carry line ranges.** Everywhere `show`
+  lists candidate definitions (the new same-directory rescue and the
+  existing ambiguous directory/glob-mode note), each entry is now
+  `path:start-end (kind)` instead of `path:line (kind)` — the same
+  shape as the body header `show` itself prints, and the range lets
+  the agent judge body size before choosing (or slice the lines
+  directly).
+- **Self-explaining failure note for extensionless misses.** When an
+  extensionless explicit input can't be detected (no shebang, or an
+  unsupported interpreter like `bash`), the empty-result note now says
+  so — including the interpreter list — instead of hiding behind the
+  generic supported-extensions message. `grep` adds the note next to
+  `no matches` (text and JSON), so "searched and found nothing" is
+  never silently conflated with "file was skipped".
+
 ## [1.5.0] — 2026-06-11
 
 ### Added

@@ -120,6 +120,13 @@ class TypeScriptAdapter:
     comment_line_prefixes = ('//',)
     import_line_prefixes = ('import ',)
     render_family = "code"
+    # JS/TS script runners. An extensionless file has no suffix, so
+    # ``parse`` falls into the TS (non-TSX) grammar — which also accepts
+    # plain JavaScript, covering both what ``node`` and what ``deno`` /
+    # ``bun`` / ``ts-node`` / ``tsx`` run.
+    shebang_programs = frozenset({
+        "node", "nodejs", "deno", "bun", "ts-node", "tsx",
+    })
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()

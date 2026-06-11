@@ -408,14 +408,16 @@ def test_grep_marks_link_href_as_import(html_dir):
     assert any(c == "import" for c in classifications)
 
 
-def test_grep_filters_inline_script_by_default(html_dir):
+def test_grep_shows_inline_script_tagged_string(html_dir):
     file_results, _total, _ = grep(
         "bootstrap", [html_dir / "with_assets.html"]
     )
     # The word `bootstrap` only appears inside the inline <script>
-    # body. By default, that's filtered as noise.
-    total = sum(len(fr.matches) for fr in file_results)
-    assert total == 0
+    # body — that is code, and it surfaces tagged ``string`` under the
+    # strings-visible default.
+    matches = [m for fr in file_results for m in fr.matches]
+    assert matches
+    assert all(m.kind == "string" for m in matches)
 
 
 # --- Hardening (v1.0.0 audit) ---------------------------------------------

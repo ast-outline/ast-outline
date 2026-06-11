@@ -68,6 +68,13 @@ class LanguageAdapter(Protocol):
     # ``file_format_hint(declarations) -> str`` (YAML) — short format
     #     annotation for the file header (``OpenAPI 3.0.0, 23 paths``);
     #     empty string when nothing is detected.
+    # ``shebang_programs: frozenset[str]`` — interpreter program names
+    #     (lowercase, version suffix stripped: ``python``, not
+    #     ``python3.13``) that select this adapter when an extensionless
+    #     explicit file input starts with a matching ``#!`` line.
+    #     Declared only by adapters whose language routinely ships as
+    #     extensionless unix CLI scripts; consumed by
+    #     ``adapters.get_adapter_for``.
 
     def parse(self, path: Path) -> ParseResult: ...
 
