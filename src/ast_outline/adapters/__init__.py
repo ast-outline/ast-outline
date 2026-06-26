@@ -9,6 +9,7 @@ covering ``.git`` / ``node_modules`` / ``__pycache__`` / ``.venv`` / ``venv``),
 and prunes ignored directories at walk time so we don't pay the cost of
 descending into ``node_modules`` just to throw the files away.
 """
+
 from __future__ import annotations
 
 import os
@@ -39,6 +40,7 @@ from .scss import ScssAdapter
 from .sql import SqlAdapter
 from .swift import SwiftAdapter
 from .typescript import TypeScriptAdapter
+from .vue import VueAdapter
 from .yaml import YamlAdapter
 
 
@@ -61,6 +63,7 @@ ADAPTERS: list[LanguageAdapter] = [
     SqlAdapter(),
     SwiftAdapter(),
     HtmlAdapter(),
+    VueAdapter(),
     MarkdownAdapter(),
     YamlAdapter(),
 ]
@@ -499,10 +502,7 @@ def collect_files_with_stats(
                         if not f.match(glob):
                             continue
                     else:
-                        if (
-                            f.suffix.lower() not in exts
-                            and f.name not in basenames
-                        ):
+                        if f.suffix.lower() not in exts and f.name not in basenames:
                             continue
                     if no_ignore_frames and _is_ignored(
                         match_dpath / fname,
@@ -570,10 +570,7 @@ def collect_files_with_stats(
                     if not f.match(glob):
                         continue
                 else:
-                    if (
-                        f.suffix.lower() not in exts
-                        and f.name not in basenames
-                    ):
+                    if f.suffix.lower() not in exts and f.name not in basenames:
                         continue
                 # File-level gitignore matches are filtered silently
                 # (no count) — see CollectResult docstring.

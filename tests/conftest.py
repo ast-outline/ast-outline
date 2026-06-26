@@ -1,4 +1,5 @@
 """Pytest shared fixtures. Only used by the test suite itself."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -102,6 +103,11 @@ def swift_dir() -> Path:
 @pytest.fixture(scope="session")
 def html_dir() -> Path:
     return FIXTURES_DIR / "html"
+
+
+@pytest.fixture(scope="session")
+def vue_dir() -> Path:
+    return FIXTURES_DIR / "vue"
 
 
 @pytest.fixture(scope="session")
