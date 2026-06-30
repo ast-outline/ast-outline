@@ -251,3 +251,13 @@ def _import_text(node: Node, src: bytes) -> str:
     if text.endswith(";"):
         text = text[:-1].rstrip()
     return text
+
+
+# --- Composite-adapter entry points ----------------------------------------
+#
+# Public, stable alias for the top-level stylesheet walker that the Vue SFC
+# adapter (``adapters/vue.py``) reuses to render a ``<style>`` block as CSS.
+# Exported without the leading underscore to declare an intentional
+# cross-adapter contract: keep this name and signature stable, or update
+# ``vue.py`` in lockstep.
+walk_top_level = _walk_top_level

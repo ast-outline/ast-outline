@@ -7,6 +7,38 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.7.0] — 2026-06-30
+
+### Added
+
+- **Vue Single-File Component support (`.vue`)** — the first
+  *composite* adapter: instead of a dedicated grammar it routes each
+  SFC section to the grammar that already ships for that language, so
+  it adds **no new dependency**. The `.vue` file is parsed once with
+  tree-sitter-html to find the top-level `<template>` / `<script>` /
+  `<style>` sections, then each section is delegated:
+  - `<template>` → the HTML adapter (elements as CSS-selector tokens,
+    heading text previews, bare-container drop/lift, `[import]` for
+    `<link>` / `<script src>`); ERROR-node recovery covers templates
+    whose Vue directives (`v-for`, `@click`, `:key`) tree-sitter-html
+    can't parse, so the structural skeleton still renders.
+  - `<script>` / `<script setup>` → the TypeScript adapter (class,
+    interface, enum, function, type alias, lexical `const`/`let`
+    declarations, import statements). Both Composition-API
+    (`<script setup>`) and Options-API files work; multiple script
+    blocks in one file are each parsed.
+  - `<style>` → the CSS adapter (rule sets, at-rule wrappers,
+    `@import` collected into the imports list).
+
+  Declarations from all three sections merge into one flat outline,
+  with byte offsets and line numbers rewritten to the original `.vue`
+  file so `show` and `grep` resolve without remapping. Deliberate
+  exclusions (may revisit): `<script lang="tsx">` uses the plain TS
+  grammar (a safe superset); `<style lang="scss">` uses the CSS
+  grammar (SCSS-only `@mixin` / `$var` aren't surfaced); custom blocks
+  (`<i18n>`, `<docs>`) are ignored. Original adapter contributed by
+  [@Xayan](https://github.com/Xayan). Suite: 2268 tests.
+
 ## [1.6.0] — 2026-06-11
 
 ### Changed

@@ -105,6 +105,11 @@ def html_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
+def vue_dir() -> Path:
+    return FIXTURES_DIR / "vue"
+
+
+@pytest.fixture(scope="session")
 def gdscript_dir() -> Path:
     return FIXTURES_DIR / "gdscript"
 

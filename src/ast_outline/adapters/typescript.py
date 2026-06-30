@@ -1256,3 +1256,14 @@ def _elided_text(node: Node, src: bytes) -> str:
 def _field_text(node: Node, field_name: str, src: bytes) -> Optional[str]:
     c = node.child_by_field_name(field_name)
     return _text(c, src) if c is not None else None
+
+
+# --- Composite-adapter entry points ----------------------------------------
+#
+# Public, stable aliases for the module walker and import collector that the
+# Vue SFC adapter (``adapters/vue.py``) reuses to render a ``<script>`` block
+# as TypeScript. Exported without the leading underscore to declare an
+# intentional cross-adapter contract: keep these names and signatures
+# stable, or update ``vue.py`` in lockstep.
+walk_module = _walk_module
+collect_imports = _collect_imports

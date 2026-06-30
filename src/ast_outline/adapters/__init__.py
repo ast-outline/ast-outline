@@ -39,6 +39,7 @@ from .scss import ScssAdapter
 from .sql import SqlAdapter
 from .swift import SwiftAdapter
 from .typescript import TypeScriptAdapter
+from .vue import VueAdapter
 from .yaml import YamlAdapter
 
 
@@ -61,6 +62,7 @@ ADAPTERS: list[LanguageAdapter] = [
     SqlAdapter(),
     SwiftAdapter(),
     HtmlAdapter(),
+    VueAdapter(),
     MarkdownAdapter(),
     YamlAdapter(),
 ]

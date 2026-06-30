@@ -819,3 +819,16 @@ def _recover_elements(
             if inner:
                 return inner
     return out
+
+
+# --- Composite-adapter entry points ----------------------------------------
+#
+# Public, stable aliases for the section-walking helpers that the Vue SFC
+# adapter (``adapters/vue.py``) reuses to render a ``<template>`` block as
+# HTML. They are exported without the leading underscore to declare an
+# intentional cross-adapter contract: keep these names and their
+# signatures stable, or update ``vue.py`` in lockstep. (Same role the
+# public helpers in ``_css_base`` already play for css/scss.)
+node_to_decls = _node_to_decls
+recover_elements = _recover_elements
+collapse_details_runs = _collapse_details_runs
