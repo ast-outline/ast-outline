@@ -504,6 +504,33 @@ def test_grep_attributed_cpp_function_is_def(tmp_path: Path) -> None:
     assert _def_lines(st) == [4]
 
 
+def test_grep_annotated_gdscript_defs_are_def(tmp_path: Path) -> None:
+    """GDScript `@tool` / `@export` / `@rpc` above a declaration keep it [def].
+
+    GDScript uses a hand-written parser; annotations on their own line
+    pull `start_line` up the same way tree-sitter preambles do.
+    """
+    src = tmp_path / "t.gd"
+    src.write_text(
+        "@tool\n"
+        "class_name MyTool\n"           # L2
+        "extends Node\n"
+        "\n"
+        "@export\n"
+        "var speed := 1.0\n"            # L6
+        "\n"
+        "@rpc(\"any_peer\")\n"
+        "func do_rpc():\n"              # L9
+        "\tpass\n"
+    )
+    cls, _, _ = grep("MyTool", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    var, _, _ = grep("speed", [src], kind_filter={KIND_DEF})
+    assert _def_lines(var) == [6]
+    fn, _, _ = grep("do_rpc", [src], kind_filter={KIND_DEF})
+    assert _def_lines(fn) == [9]
+
+
 # --- regex and case-insensitive ------------------------------------------
 
 

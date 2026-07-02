@@ -7,6 +7,24 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.7.3] — 2026-07-02
+
+### Fixed
+
+- **Decorated-definition `[def]` tagging completed for GDScript** — the
+  last adapter affected by the `start_line`-vs-name-line divergence
+  fixed in 1.7.1 / 1.7.2. GDScript uses a hand-written parser; when
+  annotations (`@tool`, `@export`, `@rpc(...)`, …) sit on their own line
+  above a declaration, `start_line` is pulled up to the first annotation
+  so `show` prints them, which left `grep <Symbol> --kind def` and
+  dir-mode `show <dir> <Symbol>` missing the class / variable / function.
+  The declaration now records `name_line` as its own line, so the
+  classifier tags [def] on the real declaration line. This closes an
+  exhaustive sweep of every adapter: the remaining languages either have
+  no such preamble (Go, Ruby, Lua, CSS/SCSS, HTML, Markdown, SQL, YAML)
+  or were already correct (Rust `#[derive]`); Vue inherits the fix
+  through the TypeScript adapter it delegates to.
+
 ## [1.7.2] — 2026-07-02
 
 ### Fixed

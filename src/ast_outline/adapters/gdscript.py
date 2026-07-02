@@ -498,6 +498,14 @@ def _build(
                 visibility=_visibility(head.name, head.kind),
                 native_kind=head.native,
                 start_line=start_line,
+                # When annotations precede the declaration (`@export` /
+                # `@rpc(...)` on their own line), `start_line` is pulled up
+                # to the first annotation so `show` prints them. The name
+                # token stays on the declaration's own line (`L.start_line`);
+                # grep's def-classifier compares against `name_line`, so an
+                # annotated declaration is tagged [def] on its real line,
+                # not on an annotation. Equals `start_line` when unannotated.
+                name_line=L.start_line,
                 end_line=L.end_line,
                 start_byte=start_byte,
                 end_byte=L.end_byte,
