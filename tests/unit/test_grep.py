@@ -318,6 +318,109 @@ def test_grep_substring_inside_name_still_def(tmp_path: Path) -> None:
     assert kinds.count(KIND_DEF) == 2
 
 
+# --- decorated / attributed definitions ----------------------------------
+#
+# A decorated declaration extends its `start_line` up over the decorator
+# lines (so `show` prints them), which drops the name token onto a lower
+# line than `start_line`. The def-classifier must tag [def] on the name
+# line, not `start_line` — otherwise `grep <sym> --kind def` (and the
+# dir-mode `show` built on it) silently miss real definitions.
+
+
+def _def_lines(file_results) -> list[int]:
+    return [m.line for fr in file_results for m in fr.matches if m.kind == KIND_DEF]
+
+
+def test_grep_decorated_class_is_def(tmp_path: Path) -> None:
+    """A decorator above a class doesn't hide the class from `--kind def`."""
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "from dataclasses import dataclass\n"
+        "\n"
+        "@dataclass(frozen=True)\n"
+        "class ModelEntry:\n"          # L4 — the name line
+        "    name: str\n"
+    )
+    results, _, _ = grep("ModelEntry", [src], kind_filter={KIND_DEF})
+    assert _def_lines(results) == [4]
+
+
+def test_grep_decorated_function_is_def(tmp_path: Path) -> None:
+    """A stacked decorator above a function keeps it a [def]."""
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "@app.command(name='start')\n"
+        "@wraps(fn)\n"
+        "def llamacpp_start(port):\n"  # L3 — the name line
+        "    pass\n"
+    )
+    results, _, _ = grep("llamacpp_start", [src], kind_filter={KIND_DEF})
+    assert _def_lines(results) == [3]
+
+
+def test_grep_decorator_name_collision_not_a_def(tmp_path: Path) -> None:
+    """`@bar` above `def bar` must NOT tag the decorator line as the def.
+
+    The def belongs to the `def bar` line; the `@bar` usage is a plain
+    reference to the decorator, not a definition. Regression guard for the
+    name-collision hole in the name-line fix.
+    """
+    src = tmp_path / "mod.py"
+    src.write_text(
+        "def bar(fn):\n"               # L1 — undecorated helper def
+        "    return fn\n"
+        "\n"
+        "@bar\n"                        # L4 — decorator use, NOT a def
+        "def bar(self):\n"             # L5 — the real decorated def
+        "    pass\n"
+    )
+    results, _, _ = grep("bar", [src], kind_filter={KIND_DEF})
+    # Two defs: the helper (L1) and the decorated method (L5). NOT L4.
+    assert sorted(_def_lines(results)) == [1, 5]
+
+
+def test_grep_attributed_csharp_class_is_def(tmp_path: Path) -> None:
+    src = tmp_path / "T.cs"
+    src.write_text(
+        "[Serializable]\n"
+        "public class Widget {\n"      # L2 — the name line
+        "    [Obsolete]\n"
+        "    public void Go() {}\n"     # L4 — the name line
+        "}\n"
+    )
+    cls, _, _ = grep("Widget", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    meth, _, _ = grep("Go", [src], kind_filter={KIND_DEF})
+    assert _def_lines(meth) == [4]
+
+
+def test_grep_annotated_java_class_is_def(tmp_path: Path) -> None:
+    src = tmp_path / "T.java"
+    src.write_text(
+        "@Deprecated\n"
+        "public class Anno {\n"        # L2 — the name line
+        "    @Override\n"
+        "    public String go() { return \"\"; }\n"  # L4
+        "}\n"
+    )
+    cls, _, _ = grep("Anno", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    meth, _, _ = grep("go", [src], kind_filter={KIND_DEF})
+    assert _def_lines(meth) == [4]
+
+
+def test_grep_decorated_ts_class_is_def(tmp_path: Path) -> None:
+    src = tmp_path / "app.ts"
+    src.write_text(
+        "@Component({selector: 'app'})\n"
+        "export class DecoratedTs {\n"  # L2 — the name line
+        "    name: string;\n"
+        "}\n"
+    )
+    results, _, _ = grep("DecoratedTs", [src], kind_filter={KIND_DEF})
+    assert _def_lines(results) == [2]
+
+
 # --- regex and case-insensitive ------------------------------------------
 
 

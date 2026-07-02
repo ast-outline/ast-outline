@@ -718,14 +718,24 @@ def _annotate_matches(
         # Re-classify if the scope walk reveals this match is the
         # definition's own name. Three conditions must hold: (1) we are
         # inside some declaration; (2) the match line is that
-        # declaration's start line; (3) the match's column falls inside
+        # declaration's name line; (3) the match's column falls inside
         # the declaration's name token on that line — guards against
         # marking `Handler` in `def run_forever(h: Handler)` as a `def`
         # of `run_forever` (the match isn't on the name token).
+        #
+        # The line compared is the declaration's `name_line`, not its
+        # `start_line`: decorated / attributed / annotated declarations
+        # extend `start_line` UP over the decorator lines (so `show`
+        # prints them), which drops the name token onto a lower line.
+        # Comparing against `start_line` would then tag [def] on a
+        # decorator line — worst of all when the decorator's name equals
+        # the definition's (`@bar\ndef bar`) — and miss the real
+        # signature line. `name_line` points at the signature; it falls
+        # back to `start_line` (0 default) for the common undecorated case.
         enclosing = _find_enclosing(result.declarations, pos)
         if (
             enclosing
-            and enclosing[-1].start_line == line_no
+            and (enclosing[-1].name_line or enclosing[-1].start_line) == line_no
             and _column_inside_name(line_content, column, enclosing[-1].name)
         ):
             kind = KIND_DEF

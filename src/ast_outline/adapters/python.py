@@ -342,6 +342,12 @@ def _node_to_decl(node: Node, src: bytes, *, inside_class: bool) -> Optional[Dec
             return None
         # Record byte range INCLUDING decorators (so `show` prints them too)
         decl.attrs = decorators + decl.attrs
+        # The name token stays on the inner definition's line (`def`/
+        # `class`), which is `decl.start_line` right now — capture it
+        # before we shift `start_line` up to the first decorator, so
+        # grep's def-classifier tags [def] on the real signature line,
+        # not on a decorator (incl. the `@bar\ndef bar` name collision).
+        decl.name_line = decl.start_line
         decl.start_line = node.start_point[0] + 1
         decl.start_byte = node.start_byte
         decl.doc_start_byte = min(decl.doc_start_byte or node.start_byte, node.start_byte)

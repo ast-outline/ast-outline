@@ -170,6 +170,23 @@ def _package_to_decl(node: Node, src: bytes) -> Declaration:
     )
 
 
+def _decl_name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    Java folds annotations into a leading ``modifiers`` child, so
+    ``node.start_point`` lands on an ``@Annotation`` line when one
+    precedes the declaration. The first child that is NOT ``modifiers``
+    is the real head (type keyword / return type), and the name token
+    sits on that line for any idiomatic signature. grep's def-classifier
+    compares against this line, so an annotated class / method is tagged
+    [def] on its signature line, not on an annotation.
+    """
+    for c in node.children:
+        if c.type != "modifiers":
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _type_to_decl(
     node: Node, src: bytes, *, parent_kind: Optional[str] = None
 ) -> Declaration:
@@ -240,6 +257,7 @@ def _type_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_decl_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -283,6 +301,7 @@ def _member_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_decl_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,

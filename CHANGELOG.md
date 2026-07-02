@@ -7,6 +7,35 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.7.1] — 2026-07-02
+
+### Fixed
+
+- **Decorated / attributed / annotated definitions are now tagged
+  `[def]`.** The `grep` def-classifier compared a match's line against
+  the declaration's `start_line`, which decorated declarations extend
+  *up* over their decorator lines (so `show` prints them) — pushing the
+  name token onto a lower line. The equality failed, so a decorated
+  class / function / method matched on its own name was classified
+  `ref` / `call` instead of `def`. Two user-visible symptoms are fixed:
+  - `ast-outline grep <Symbol> --kind def` no longer returns "no
+    matches" for real decorated definitions.
+  - dir-mode `ast-outline show <dir> <Symbol>` no longer answers
+    "symbol not found" for them (it pre-filters the directory with the
+    same def-classifier, so the miss cascaded).
+
+  Declarations now carry a `name_line` recording the signature line
+  independently of `start_line`; the classifier compares against it.
+  This also fixes a latent bug where a decorator whose name equals the
+  definition's (`@bar` above `def bar`) tagged the *decorator* line as
+  the def. Covers Python (`@dataclass`, `@classmethod`, stacked
+  decorators), C# attributes (`[Serializable]`), Java annotations
+  (`@Deprecated`, `@Override`), and TypeScript decorators
+  (`@Component`) — Rust `#[derive]` was already correct. `grep` does not
+  distinguish `[property]` for decorated Python properties; `[def]` is
+  the intended tag (digest/outline property differentiation is
+  unchanged).
+
 ## [1.7.0] — 2026-06-30
 
 ### Added

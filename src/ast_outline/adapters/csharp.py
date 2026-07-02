@@ -197,6 +197,7 @@ def _type_to_decl(node: Node, src: bytes) -> Declaration:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_decl_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -236,6 +237,7 @@ def _member_to_decls(node: Node, src: bytes) -> list[Declaration]:
             docs=docs,
             visibility=visibility,
             start_line=node.start_point[0] + 1,
+            name_line=_decl_name_line(node),
             end_line=node.end_point[0] + 1,
             start_byte=node.start_byte,
             end_byte=node.end_byte,
@@ -249,6 +251,23 @@ def _member_to_decls(node: Node, src: bytes) -> list[Declaration]:
 
 
 # --- Signature extraction -------------------------------------------------
+
+
+def _decl_name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    C# folds leading ``[Attribute]`` lists into the declaration node, so
+    ``node.start_point`` lands on the attribute line, not the signature.
+    The first child that is NOT an ``attribute_list`` is the real head of
+    the declaration (modifiers / return type / name), and the name token
+    sits on that line for any idiomatic single-head signature. grep's
+    def-classifier compares against this line, so an attributed class /
+    method is tagged [def] on its signature line, not on an attribute.
+    """
+    for c in node.children:
+        if c.type != "attribute_list":
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
 
 
 def _type_signature(node: Node, src: bytes) -> str:

@@ -114,6 +114,20 @@ class Declaration:
     native_kind: str = ""
     start_line: int = 0     # 1-based, inclusive
     end_line: int = 0       # 1-based, inclusive
+    # 1-based line of the declaration's own name token, when it differs
+    # from `start_line`. Decorated / attributed / annotated declarations
+    # extend `start_line` UP to cover the decorator lines (so `show`
+    # prints them and outline ranges include them), which pushes the
+    # name token onto a lower line than `start_line`. `grep`'s def-
+    # classifier compares a match's line against the name line, not
+    # `start_line`, so a decorated definition is still tagged [def] on
+    # its real signature line — and a decorator whose name collides with
+    # the definition's (`@bar\ndef bar`) is NOT mistaken for the def.
+    # 0 (default) means "same as `start_line`" — the common case for
+    # declarations with no leading decorators; the classifier falls back
+    # to `start_line`.
+    name_line: int = 0
+
     start_byte: int = 0     # for `show` — source slice
     end_byte: int = 0
     doc_start_byte: int = 0 # if there's leading doc, slice starts here

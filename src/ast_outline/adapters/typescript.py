@@ -603,6 +603,12 @@ def _call_block_to_decl(
 
 def _class_to_decl(node: Node, src: bytes) -> Declaration:
     name = _field_text(node, "name", src) or "?"
+    # Line of the class name token — diverges from `start_line` when the
+    # class carries leading decorators (`@Component`), which push
+    # `start_line` up (here or in the `export_statement` widening). Lets
+    # grep tag [def] on the real `class` line, not on a decorator.
+    name_node = node.child_by_field_name("name")
+    name_line = (name_node.start_point[0] + 1) if name_node is not None else 0
     bases = _class_bases(node, src)
     attrs = _decorators(node, src)
     docs = _collect_docs(node, src)
@@ -627,6 +633,7 @@ def _class_to_decl(node: Node, src: bytes) -> Declaration:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=name_line,
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
