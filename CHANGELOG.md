@@ -7,6 +7,31 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.7.2] — 2026-07-02
+
+### Fixed
+
+- **Decorated-definition `[def]` tagging extended to Kotlin, PHP, Swift,
+  Scala, and C++.** v1.7.1 fixed the def-classifier for Python, C#,
+  Java, and TypeScript, but the same `start_line`-vs-name-line
+  divergence affected every other adapter whose grammar folds a leading
+  annotation / attribute / modifier preamble into the declaration node.
+  As a result `grep <Symbol> --kind def` and dir-mode `show <dir>
+  <Symbol>` still missed:
+  - Kotlin `@Serializable class` / `@Deprecated fun`
+  - PHP 8 `#[Attribute] class` / `#[Deprecated] function`
+  - Swift `@objc class` / `@available func`
+  - Scala `@SerialVersionUID class` / `@deprecated def`
+  - C++ `[[deprecated]]` on its own line above a function
+
+  Each adapter now records `name_line` (introduced in 1.7.1) by skipping
+  its language's leading preamble node(s) — `modifiers` (Kotlin/Swift),
+  `annotation` + `modifiers` (Scala), `attribute_list` + `*_modifier`
+  (PHP), `attribute_declaration` (C++) — so the classifier tags [def] on
+  the real signature line. Inline attributes that never diverged (`struct
+  [[nodiscard]] Foo`) are unaffected. Ruby has no such preamble and was
+  already correct.
+
 ## [1.7.1] — 2026-07-02
 
 ### Fixed

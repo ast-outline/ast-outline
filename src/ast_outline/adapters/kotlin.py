@@ -176,6 +176,7 @@ def _package_to_decl(node: Node, src: bytes) -> Declaration:
         name=name,
         signature=f"package {name}" if name else "package",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -210,6 +211,24 @@ def _decl_from_node(
 
 
 # --- Types (class / interface / object / companion) ----------------------
+
+
+def _name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    Kotlin folds annotations and visibility / inheritance / class
+    modifiers into a leading `modifiers` child, so `node.start_point`
+    lands on an `@Annotation` (or modifier) line when one precedes the
+    declaration. The first child that is NOT `modifiers` is the real head
+    (the `class` / `fun` / `val` keyword or the name), and the name token
+    sits on that line. grep's def-classifier compares a match against
+    this line, so an annotated declaration is tagged [def] on its
+    signature line, not on an annotation.
+    """
+    for c in node.children:
+        if c.type != "modifiers":
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
 
 
 def _type_to_decl(
@@ -249,6 +268,7 @@ def _type_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -283,6 +303,7 @@ def _object_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -316,6 +337,7 @@ def _companion_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -463,6 +485,7 @@ def _class_parameter_to_field(node: Node, src: bytes) -> Optional[Declaration]:
         attrs=attrs,
         visibility=_visibility(node),
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -494,6 +517,7 @@ def _function_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -517,6 +541,7 @@ def _secondary_ctor_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -550,6 +575,7 @@ def _property_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -593,6 +619,7 @@ def _enum_entry_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility="public",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -624,6 +651,7 @@ def _type_alias_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,

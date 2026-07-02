@@ -592,6 +592,26 @@ def _ns_body(node: Node) -> Optional[Node]:
 # --- Types ----------------------------------------------------------------
 
 
+def _name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    C++ `[[...]]` attributes attach as a leading `attribute_declaration`
+    child, so `node.start_point` lands on the attribute line when one
+    precedes the declaration on its own line (e.g. `[[deprecated]]` above
+    a free function). The first child that is NOT `attribute_declaration`
+    is the real head (the return type / `class` / `struct` keyword), and
+    the name token sits on that line. grep's def-classifier compares a
+    match against it, so an attributed declaration is tagged [def] on its
+    signature line, not on an attribute. Inline attributes (`struct
+    [[nodiscard]] Foo`) don't diverge — the name is already on
+    `start_line` — and this returns that same line.
+    """
+    for c in node.children:
+        if c.type != "attribute_declaration":
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _type_to_decl(
     node: Node,
     src: bytes,
@@ -650,6 +670,7 @@ def _type_to_decl(
         bases=bases,
         native_kind=native_keyword,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -871,6 +892,7 @@ def _function_declarator_to_decl(
         name=name,
         signature=signature,
         start_line=outer.start_point[0] + 1,
+        name_line=_name_line(outer),
         end_line=outer.end_point[0] + 1,
         start_byte=outer.start_byte,
         end_byte=outer.end_byte,

@@ -544,6 +544,7 @@ def _namespace_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         name=name,
         signature=signature,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -552,6 +553,25 @@ def _namespace_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
 
 
 # --- Types (class / interface / trait / enum) ----------------------------
+
+
+def _name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    PHP 8 attributes (`#[Attr]`) arrive as a leading `attribute_list`
+    child and modifiers (`public` / `abstract` / `final` / `readonly` /
+    `static`) as `*_modifier` children, so `node.start_point` lands on an
+    attribute or modifier line when one precedes the declaration. The
+    first child that is neither is the real head (the `class` /
+    `function` / `const` keyword or the name), and the name token sits on
+    that line. grep's def-classifier compares a match against it, so an
+    attributed declaration is tagged [def] on its signature line, not on
+    an attribute.
+    """
+    for c in node.children:
+        if c.type != "attribute_list" and not c.type.endswith("_modifier"):
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
 
 
 def _type_to_decl(
@@ -599,6 +619,7 @@ def _type_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -669,6 +690,7 @@ def _method_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -696,6 +718,7 @@ def _function_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -803,6 +826,7 @@ def _const_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -825,6 +849,7 @@ def _enum_case_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility="public",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,

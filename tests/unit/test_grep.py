@@ -421,6 +421,89 @@ def test_grep_decorated_ts_class_is_def(tmp_path: Path) -> None:
     assert _def_lines(results) == [2]
 
 
+def test_grep_annotated_kotlin_class_and_fun_are_def(tmp_path: Path) -> None:
+    src = tmp_path / "t.kt"
+    src.write_text(
+        "@Serializable\n"
+        "class KtAnno(val x: Int)\n"    # L2 — the name line
+        "\n"
+        "@Deprecated(\"no\")\n"
+        "fun ktFn(): Int = 1\n"          # L5
+    )
+    cls, _, _ = grep("KtAnno", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    fn, _, _ = grep("ktFn", [src], kind_filter={KIND_DEF})
+    assert _def_lines(fn) == [5]
+
+
+def test_grep_attributed_php_class_and_method_are_def(tmp_path: Path) -> None:
+    src = tmp_path / "t.php"
+    src.write_text(
+        "<?php\n"
+        "#[Attribute]\n"
+        "class PhpAttr {\n"             # L3
+        "    #[Deprecated]\n"
+        "    public function go(): void {}\n"  # L5
+        "}\n"
+    )
+    cls, _, _ = grep("PhpAttr", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [3]
+    meth, _, _ = grep("go", [src], kind_filter={KIND_DEF})
+    assert _def_lines(meth) == [5]
+
+
+def test_grep_attributed_swift_class_and_func_are_def(tmp_path: Path) -> None:
+    src = tmp_path / "t.swift"
+    src.write_text(
+        "@objc\n"
+        "class SwiftAttr {\n"           # L2
+        "    @available(iOS 13, *)\n"
+        "    func doThing() {}\n"        # L4
+        "}\n"
+    )
+    cls, _, _ = grep("SwiftAttr", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    fn, _, _ = grep("doThing", [src], kind_filter={KIND_DEF})
+    assert _def_lines(fn) == [4]
+
+
+def test_grep_annotated_scala_class_and_def_are_def(tmp_path: Path) -> None:
+    src = tmp_path / "t.scala"
+    src.write_text(
+        "@SerialVersionUID(1)\n"
+        "class ScalaAnno {\n"           # L2
+        "  @deprecated(\"x\", \"1.0\")\n"
+        "  def scalaFn(): Int = 1\n"     # L4
+        "}\n"
+    )
+    cls, _, _ = grep("ScalaAnno", [src], kind_filter={KIND_DEF})
+    assert _def_lines(cls) == [2]
+    fn, _, _ = grep("scalaFn", [src], kind_filter={KIND_DEF})
+    assert _def_lines(fn) == [4]
+
+
+def test_grep_attributed_cpp_function_is_def(tmp_path: Path) -> None:
+    """A `[[attr]]` on its own line above a C++ function keeps it a [def].
+
+    Inline attributes (`struct [[nodiscard]] Foo`) never diverged; the
+    own-line leading attribute is the case that pushed `start_line` above
+    the name.
+    """
+    src = tmp_path / "t.cpp"
+    src.write_text(
+        "[[deprecated]]\n"
+        "int cppFn() { return 1; }\n"   # L2
+        "\n"
+        "struct [[nodiscard]] CppStruct {\n"  # L4 — inline attr, no divergence
+        "    int x;\n"
+        "};\n"
+    )
+    fn, _, _ = grep("cppFn", [src], kind_filter={KIND_DEF})
+    assert _def_lines(fn) == [2]
+    st, _, _ = grep("CppStruct", [src], kind_filter={KIND_DEF})
+    assert _def_lines(st) == [4]
+
+
 # --- regex and case-insensitive ------------------------------------------
 
 

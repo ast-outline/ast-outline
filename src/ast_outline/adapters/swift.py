@@ -174,6 +174,24 @@ def _decl_from_node(
 # --- Types (class / struct / enum / extension) ----------------------------
 
 
+def _name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    Swift folds attributes (`@objc`, `@available(...)`, …) and visibility
+    modifiers into a leading `modifiers` child, so `node.start_point`
+    lands on an attribute line when one precedes the declaration. The
+    first child that is NOT `modifiers` is the real head (the `class` /
+    `func` / `var` keyword or the name), and the name token sits on that
+    line. grep's def-classifier compares a match against this line, so an
+    attributed declaration is tagged [def] on its signature line, not on
+    an attribute.
+    """
+    for c in node.children:
+        if c.type != "modifiers":
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _class_decl_to_decl(
     node: Node, src: bytes, *, parent_kind: Optional[str]
 ) -> Optional[Declaration]:
@@ -216,6 +234,7 @@ def _class_decl_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -252,6 +271,7 @@ def _protocol_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -322,6 +342,7 @@ def _function_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -347,6 +368,7 @@ def _protocol_function_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -371,6 +393,7 @@ def _init_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -401,6 +424,7 @@ def _deinit_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -425,6 +449,7 @@ def _subscript_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -458,6 +483,7 @@ def _property_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -486,6 +512,7 @@ def _protocol_property_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -526,6 +553,7 @@ def _enum_entry_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility="public",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -548,6 +576,7 @@ def _typealias_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -571,6 +600,7 @@ def _associatedtype_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,

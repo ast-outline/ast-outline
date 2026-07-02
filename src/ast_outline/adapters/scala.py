@@ -341,6 +341,7 @@ def _braced_package_to_decl(node: Node, src: bytes) -> Declaration:
         name=name,
         signature=f"package {name}" if name else "package",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -390,6 +391,25 @@ def _decl_from_node(
 # --- Type-bearing declarations (class / trait / object / enum) ----------
 
 
+def _name_line(node: Node) -> int:
+    """1-based line where the declaration's signature begins.
+
+    Scala places annotations as **direct children** of the declaration
+    (`annotation` nodes, unlike Java/Kotlin which nest them in
+    `modifiers`), and visibility / `final` modifiers in a `modifiers`
+    child. Either can precede the declaration on earlier lines, so
+    `node.start_point` lands on an annotation / modifier line. The first
+    child that is neither is the real head (the `class` / `def` keyword or
+    the name), and the name token sits on that line. grep's def-classifier
+    compares a match against it, so an annotated declaration is tagged
+    [def] on its signature line, not on an annotation.
+    """
+    for c in node.children:
+        if c.type not in ("annotation", "modifiers"):
+            return c.start_point[0] + 1
+    return node.start_point[0] + 1
+
+
 def _type_to_decl(
     node: Node, src: bytes, *, parent_kind: Optional[str]
 ) -> Declaration:
@@ -435,6 +455,7 @@ def _type_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -524,6 +545,7 @@ def _enum_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -613,6 +635,7 @@ def _given_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -646,6 +669,7 @@ def _package_object_to_decl(node: Node, src: bytes) -> Declaration:
         docs=docs,
         visibility="public",
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -716,6 +740,7 @@ def _class_parameter_to_field(
         attrs=attrs,
         visibility=_visibility(node),
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -746,6 +771,7 @@ def _function_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -776,6 +802,7 @@ def _property_to_decl(
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
@@ -848,6 +875,7 @@ def _type_alias_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
         docs=docs,
         visibility=visibility,
         start_line=node.start_point[0] + 1,
+        name_line=_name_line(node),
         end_line=node.end_point[0] + 1,
         start_byte=node.start_byte,
         end_byte=node.end_byte,
