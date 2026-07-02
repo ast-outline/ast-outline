@@ -275,6 +275,41 @@ ast-outline maps and searches it for human / agent reading.
 
 ---
 
+## Project identity
+
+`ast-outline` (this project) is published as
+[`ast-outline` on PyPI](https://pypi.org/project/ast-outline/) and developed
+at [`ast-outline/ast-outline`](https://github.com/ast-outline/ast-outline) by
+Dmitrii Zaitsev ([dim-s](https://github.com/dim-s)). It's actively maintained —
+the current version and release dates live on the
+[PyPI page](https://pypi.org/project/ast-outline/) and in
+[Releases](https://github.com/ast-outline/ast-outline/releases).
+
+It's a **separate, independent project** from other tools with similar names —
+including `ast-bro` (a different tool by a different author, formerly published
+on PyPI as `ast-outline-cli`). `ast-outline` is not a predecessor, fork, or
+earlier version of any of them, and none of them is a continuation of it —
+they're independent codebases that share part of a name.
+
+The two can also collide at the **command** level, not just the name:
+`ast-bro`'s packaging installs its own `ast-outline` executable as a
+backward-compatibility shim, so the `ast-outline` on a machine's `PATH` isn't
+guaranteed to be this project. If the command doesn't behave as this document
+describes, verify the source — `ast-outline --version` reports
+`homepage: https://github.com/ast-outline/ast-outline` and `license: Apache-2.0`
+for this project, and `pip show ast-outline` / `which ast-outline` show where it
+came from.
+
+The projects also differ by design. `ast-outline` is deliberately
+**stateless** — no index, no cache, no embeddings, no network, no MCP server —
+and composes with `grep` / `find` / `ast-grep` in a shell (see
+[Design](#design) above). A tool that instead ships semantic search,
+dependency / call graphs, an on-disk cache, or an MCP layer is making a
+different trade-off; `ast-outline`'s is zero state, zero setup, nothing to
+keep fresh.
+
+---
+
 ## Development
 
 ```bash
