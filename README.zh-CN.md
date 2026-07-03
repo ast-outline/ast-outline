@@ -172,11 +172,15 @@ ast-outline prompt | pbcopy   # macOS 剪贴板
 | Rust       | `.rs` |
 | PHP        | `.php`、`.phtml`、`.phps`、`.php8` *(PHP 8.x + 7.4 LTS；已在 WordPress 核心上验证)* |
 | Ruby       | `.rb`、`.rake`、`.gemspec`、`.ru`、`Rakefile`、`Gemfile` *（含 Rails 关联）* |
+| Elixir     | `.ex`、`.exs` *（`defmodule` → 嵌套命名空间，`defprotocol` / `defimpl`，`defmacro` / `defguard` / `defdelegate` 标记，`defstruct` 字段，`@type` / `@callback`，ExUnit / Phoenix DSL 块作为命名容器）* |
 | Lua        | `.lua`、`.wlua` *（原生 Lua 5.1–5.4；`function M:foo` → 方法，元方法 → 运算符；覆盖 Neovim、LÖVE、OpenResty、Redis 脚本）* |
+| GDScript   | `.gd` *（Godot 4 + Godot 3；手写解析器 — 没有现成的 tree-sitter 语法 wheel；`class_name`/`extends` 合并为脚本的隐式类，signals → 事件，`@export`/`@onready` → 属性，带 `get`/`set`/`setget` 的属性，`preload` → 导入）* |
 | Swift      | `.swift` *（结构体、枚举、协议、extension、actor；泛型与协议遵循）* |
 | CSS        | `.css` |
 | SCSS       | `.scss` |
 | SQL        | `.sql` *（主要面向 PostgreSQL；MySQL / SQLite 可用）* |
+| HTML       | `.html`、`.htm` *（元素渲染为 CSS 选择器 token — `section#hero`、`form[action=/x]`；`<link rel=stylesheet>` / `<script src>` 收集为导入；`<script>` / `<style>` / `<!-- -->` 默认从 grep 中过滤）* |
+| Vue        | `.vue` *（单文件组件 — `<template>` 按 HTML 解析，`<script>` 按 TypeScript，`<style>` 按 CSS；三个部分合并为一个 outline；无额外依赖 — 复用现有语法）* |
 | Markdown   | `.md`、`.markdown`、`.mdx`、`.mdown` |
 | YAML       | `.yaml`、`.yml` *（自动识别 Kubernetes / OpenAPI / GitHub Actions）* |
 

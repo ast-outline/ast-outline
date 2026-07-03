@@ -180,11 +180,15 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
 | Rust       | `.rs` |
 | PHP        | `.php`, `.phtml`, `.phps`, `.php8` *(PHP 8.x + 7.4 LTS; протестировано на ядре WordPress)* |
 | Ruby       | `.rb`, `.rake`, `.gemspec`, `.ru`, `Rakefile`, `Gemfile` *(вкл. Rails-ассоциации)* |
+| Elixir     | `.ex`, `.exs` *(`defmodule` → вложенные пространства имён, `defprotocol` / `defimpl`, маркеры `defmacro` / `defguard` / `defdelegate`, поля `defstruct`, `@type` / `@callback`, DSL-блоки ExUnit / Phoenix как именованные контейнеры)* |
 | Lua        | `.lua`, `.wlua` *(чистый Lua 5.1–5.4; `function M:foo` → метод, метаметоды → оператор; покрывает Neovim, LÖVE, OpenResty, Redis-скрипты)* |
+| GDScript   | `.gd` *(Godot 4 + Godot 3; рукописный парсер — готового tree-sitter-грамматики нет; `class_name`/`extends` объединяются в неявный класс скрипта, signals → события, `@export`/`@onready` → атрибуты, свойства с `get`/`set`/`setget`, `preload` → импорты)* |
 | Swift      | `.swift` *(структуры, enum, протоколы, extension, actor; дженерики и соответствие протоколам)* |
 | CSS        | `.css` |
 | SCSS       | `.scss` |
 | SQL        | `.sql` *(основной target — PostgreSQL; MySQL / SQLite — рабочие)* |
+| HTML       | `.html`, `.htm` *(элементы рендерятся как CSS-селекторные токены — `section#hero`, `form[action=/x]`; `<link rel=stylesheet>` / `<script src>` собираются как импорты; `<script>` / `<style>` / `<!-- -->` по умолчанию отфильтрованы из grep)* |
+| Vue        | `.vue` *(Single-File Components — `<template>` парсится как HTML, `<script>` как TypeScript, `<style>` как CSS; три секции сливаются в один outline; без доп. зависимости — переиспользует существующие грамматики)* |
 | Markdown   | `.md`, `.markdown`, `.mdx`, `.mdown` |
 | YAML       | `.yaml`, `.yml` *(автоопределение Kubernetes / OpenAPI / GitHub Actions)* |
 
