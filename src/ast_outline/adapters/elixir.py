@@ -36,8 +36,18 @@ callee is a plain identifier with no dot receiver, and (2) the first
 argument is a string or atom label. Calls failing either test are
 descended transparently so nested containers still surface.
 
-Function clause deduplication: only the first clause of each (name,
-visibility) pair is emitted; subsequent pattern-match clauses are skipped.
+Function clause deduplication: only the first clause of each
+(def-keyword, name, arity) key is emitted; subsequent pattern-match
+clauses are skipped. Arity and the def-keyword are part of the key so
+distinct functions are never collapsed — ``foo/1`` vs ``foo/2`` (arity
+is part of a function's identity in Elixir) and ``def foo`` vs
+``defguard foo`` each stay separate. Deduplication is scoped to the
+enclosing container: a fresh key set starts at each
+``defmodule`` / ``defprotocol`` / ``defimpl`` and at each named DSL
+block. The per-DSL-block reset is deliberate — a KIND_BLOCK is rendered
+as its own container, so a ``def`` appearing in two sibling blocks
+surfaces once under each rather than collapsing across them (transparent
+descent, which hoists into the parent, shares the parent's set instead).
 """
 from __future__ import annotations
 
@@ -87,6 +97,9 @@ _MODULE_ATTR_TYPES: dict[str, tuple[str, str]] = {
 }
 
 _IMPORT_MACROS = frozenset({"use", "import", "alias", "require"})
+# def-forms that open a module scope — their do_blocks carry top-level
+# imports the collector descends into.
+_MODULE_CONTAINER_MACROS = frozenset({"defmodule", "defprotocol", "defimpl"})
 _BLOCK_LABEL_TYPES = frozenset({"string", "atom"})
 
 
@@ -132,7 +145,7 @@ def _walk_body(
     src: bytes,
     *,
     scope: str,
-    seen_defs: set[tuple[str, str]],
+    seen_defs: set[tuple[str, str, int]],
     out: list[Declaration],
 ) -> None:
     pending_docs: list[str] = []
@@ -150,7 +163,19 @@ def _walk_body(
         if t == "unary_operator":
             decl, is_doc = _handle_module_attr(node, src, pending_docs)
             if is_doc:
-                pending_doc_node = node
+                # Anchor the doc-start to this node only when it actually
+                # contributed text. A no-op ``@moduledoc`` (or ``@doc
+                # false``) leaves pending_docs empty — anchoring here
+                # would leave a stale node pointing before any later
+                # comment doc, throwing off its computed doc_start_byte.
+                pending_doc_node = node if pending_docs else None
+                continue
+            if decl is None:
+                # An ignored module attribute (@spec, @impl, @behaviour,
+                # a custom one …) sitting between a @doc and the def it
+                # documents must stay transparent — falling through here
+                # would reset pending_docs and swallow the doc before it
+                # reaches the def.
                 continue
 
         elif t == "call":
@@ -175,7 +200,7 @@ def _walk_body(
                 do_blk = _do_block(node)
                 if do_blk is not None:
                     if _is_block_call(node, src):
-                        decl = _block_call_to_decl(node, src, do_blk)
+                        decl = _block_call_to_decl(node, src, do_blk, scope)
                     else:
                         # Transparent descent -- surface nested DSL containers.
                         _walk_body(do_blk.named_children, src,
@@ -211,7 +236,16 @@ def _handle_module_attr(
     if attr_name is None:
         return None, False
 
-    if attr_name in ("doc", "moduledoc"):
+    if attr_name == "moduledoc":
+        # The enclosing ``defmodule`` already absorbs its own
+        # ``@moduledoc`` (see ``_defmodule_to_decl``). Treat it as a
+        # no-op here so it never leaks onto the module's first member
+        # as a stray doc — just swallow any pending member doc that
+        # preceded it.
+        pending_docs.clear()
+        return None, True
+
+    if attr_name == "doc":
         pending_docs.clear()
         doc_text = _attr_string_arg(inner, src)
         if doc_text:
@@ -269,14 +303,10 @@ def _type_attr_name_sig(inner: Node, src: bytes, attr_name: str) -> tuple[str, s
         return "?", f"@{attr_name} ?"
     for c in args.named_children:
         if c.type == "binary_operator":
-            left = c.named_children[0] if c.named_children else None
-            if left is None:
-                name = "?"
-            elif left.type == "call":
-                name = _text(left.named_children[0], src) if left.named_children else "?"
-            else:
-                name = _text(left, src).split("(")[0]
-            return name, _collapse_ws(f"@{attr_name} " + _text(c, src))
+            # ``name(params) :: def`` — and, like @callback, optionally
+            # wrapped in ``... when var: bound``, so share the same
+            # left-descent head resolver.
+            return _spec_head_name(c, src), _collapse_ws(f"@{attr_name} " + _text(c, src))
         if c.type == "identifier":
             name = _text(c, src)
             return name, f"@{attr_name} {name}"
@@ -284,19 +314,41 @@ def _type_attr_name_sig(inner: Node, src: bytes, attr_name: str) -> tuple[str, s
 
 
 def _callback_name_sig(inner: Node, src: bytes) -> tuple[str, str]:
-    """(name, sig) from the inner call of a @callback node."""
+    """(name, sig) from a @callback spec.
+
+    The spec's outermost node is a chain of ``binary_operator``s —
+    ``name(args) :: ret`` optionally wrapped in ``... when guard``. The
+    head is the deepest-left ``call`` (``fetch(id)``) or, for a
+    paren-less zero-arity callback (``@callback ready :: t``), a bare
+    ``identifier``.
+    """
     args = _arguments_node(inner)
     if args is None:
         return "?", "?"
-    for c in args.named_children:
-        if c.type == "binary_operator":
-            left = c.named_children[0] if c.named_children else None
-            if left is not None and left.type == "call" and left.named_children:
-                name = _text(left.named_children[0], src)
-            else:
-                name = "?"
-            return name, _collapse_ws(_text(c, src))
-    return "?", "?"
+    named = args.named_children
+    if not named:
+        return "?", "?"
+    spec = named[0]
+    return _spec_head_name(spec, src), _collapse_ws(_text(spec, src))
+
+
+def _spec_head_name(node: Node, src: bytes) -> str:
+    """Name at the head of a ``::`` / ``when`` spec chain — shared by
+    @callback and @type/@typep/@opaque, whose specs have the same shape
+    (``name(params) :: def`` optionally wrapped in ``when``). Descend the
+    left edge of nested ``binary_operator``s to the ``call`` head
+    (``fetch(id)`` → ``fetch``) or, for the paren-less zero-arity form
+    (``ready :: t``), the bare ``identifier``; ``?`` when neither."""
+    cur: Optional[Node] = node
+    while cur is not None and cur.type == "binary_operator":
+        cur = cur.named_children[0] if cur.named_children else None
+    if cur is None:
+        return "?"
+    if cur.type == "call":
+        return _inner_fn_name(cur, src)
+    if cur.type == "identifier":
+        return _text(cur, src)
+    return "?"
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +460,7 @@ def _def_to_decl(
     src: bytes,
     scope: str,
     fn_name: str,
-    seen_defs: set[tuple[str, str]],
+    seen_defs: set[tuple[str, str, int]],
 ) -> Optional[Declaration]:
     attr_marker, priv = _DEF_NAMES[fn_name]
     visibility = "private" if priv else ""
@@ -416,9 +468,14 @@ def _def_to_decl(
     head = _def_head(node, src)
     if head is None:
         return None
-    name, sig = head
+    name, sig, arity = head
 
-    key = (name, visibility)
+    # Deduplicate only true multi-clause repeats: successive clauses of
+    # one function share name, def-keyword, AND arity. The key keeps all
+    # three so distinct functions are never collapsed — ``foo/1`` vs
+    # ``foo/2`` (arity is part of a function's identity in Elixir) and
+    # ``def foo`` vs ``defguard foo`` (separate constructs) each stay.
+    key = (fn_name, name, arity)
     if key in seen_defs:
         return None
     seen_defs.add(key)
@@ -437,12 +494,14 @@ def _def_to_decl(
     )
 
 
-def _def_head(node: Node, src: bytes) -> Optional[tuple[str, str]]:
-    """(name, sig) for a def-form call.
+def _def_head(node: Node, src: bytes) -> Optional[tuple[str, str, int]]:
+    """(name, sig, arity) for a def-form call.
 
     Head shapes: ``call`` (foo(x)), ``binary_operator`` (foo(x) when guard),
     ``identifier`` (foo with no parens). Signature slice stops before the
     do_block or do: body; defdelegate with no body includes the full args.
+    Arity is the parameter count of the head (0 for the paren-less form),
+    used to keep distinct arities apart in clause deduplication.
     """
     args = _arguments_node(node)
     if args is None:
@@ -454,11 +513,14 @@ def _def_head(node: Node, src: bytes) -> Optional[tuple[str, str]]:
     head_node = named[0]
     if head_node.type == "call":
         name = _inner_fn_name(head_node, src)
+        arity = _call_arity(head_node)
     elif head_node.type == "binary_operator":
         left = head_node.named_children[0] if head_node.named_children else None
         name = _inner_fn_name(left, src) if left is not None else "?"
+        arity = _call_arity(left) if left is not None and left.type == "call" else 0
     elif head_node.type == "identifier":
         name = _text(head_node, src)
+        arity = 0
     else:
         return None
 
@@ -471,7 +533,14 @@ def _def_head(node: Node, src: bytes) -> Optional[tuple[str, str]]:
         end = args.end_byte
 
     sig = _collapse_ws(src[node.start_byte:end].decode("utf8", errors="replace")).rstrip(",")
-    return name, sig
+    return name, sig, arity
+
+
+def _call_arity(call_node: Node) -> int:
+    """Parameter count of a call head — the length of its argument list,
+    0 when the call carries no ``arguments`` node (paren-less form)."""
+    args = _arguments_node(call_node)
+    return len(args.named_children) if args is not None else 0
 
 
 def _has_do_keyword(arg_nodes: list[Node], src: bytes) -> bool:
@@ -500,6 +569,15 @@ def _inner_fn_name(node: Optional[Node], src: bytes) -> str:
 # defstruct / defexception
 # ---------------------------------------------------------------------------
 
+def _pair_key(pair: Node, src: bytes) -> Optional[str]:
+    """Key name of a ``key: default`` pair. A ``keyword`` node spans
+    ``name: `` — the trailing colon and the space before the value both
+    need stripping. None for a non-pair node."""
+    if pair.type == "pair" and pair.named_children:
+        return _text(pair.named_children[0], src).rstrip(": ")
+    return None
+
+
 def _struct_to_decls(node: Node, src: bytes, fn_name: str) -> list[Declaration]:
     """One KIND_FIELD per declared struct key."""
     marker = _STRUCT_MACROS[fn_name]
@@ -513,12 +591,23 @@ def _struct_to_decls(node: Node, src: bytes, fn_name: str) -> list[Declaration]:
             for item in c.named_children:
                 if item.type == "atom":
                     keys.append(_text(item, src).lstrip(":"))
-                elif item.type == "pair" and item.named_children:
-                    keys.append(_text(item.named_children[0], src).rstrip(":"))
+                elif item.type == "pair":
+                    key = _pair_key(item, src)
+                    if key is not None:
+                        keys.append(key)
+                # Trailing ``key: default`` entries in a bracketed list
+                # (``defstruct [:a, b: 1]``) are grouped under a
+                # ``keywords`` node, not as loose ``pair`` siblings.
+                elif item.type == "keywords":
+                    keys.extend(
+                        k for p in item.named_children
+                        if (k := _pair_key(p, src)) is not None
+                    )
         elif c.type == "keywords":
-            for pair in c.named_children:
-                if pair.type == "pair" and pair.named_children:
-                    keys.append(_text(pair.named_children[0], src).rstrip(":"))
+            keys.extend(
+                k for p in c.named_children
+                if (k := _pair_key(p, src)) is not None
+            )
 
     sl, el = node.start_point[0] + 1, node.end_point[0] + 1
     sb, eb = node.start_byte, node.end_byte
@@ -560,13 +649,16 @@ def _block_label(node: Node, src: bytes) -> str:
     return text or "?"
 
 
-def _block_call_to_decl(node: Node, src: bytes, do_blk: Node) -> Declaration:
+def _block_call_to_decl(node: Node, src: bytes, do_blk: Node, scope: str) -> Declaration:
     raw = src[node.start_byte:do_blk.start_byte].decode("utf8", errors="replace")
     sig = _collapse_ws(raw).rstrip().rstrip(",")
     if len(sig) > 140:
         sig = sig[:137] + "..."
     children: list[Declaration] = []
-    _walk_body(do_blk.named_children, src, scope="top", seen_defs=set(), out=children)
+    # Forward the enclosing scope so a ``def`` nested in a DSL block that
+    # sits inside a module is still classified METHOD, not FUNCTION —
+    # matching the transparent-descent branch in ``_walk_body``.
+    _walk_body(do_blk.named_children, src, scope=scope, seen_defs=set(), out=children)
     return Declaration(
         kind=KIND_BLOCK,
         name=_block_label(node, src),
@@ -586,14 +678,15 @@ def _block_call_to_decl(node: Node, src: bytes, do_blk: Node) -> Declaration:
 
 def _collect_imports(nodes: list[Node], src: bytes, out: list[str]) -> None:
     """Collect use/import/alias/require at module-body depth.
-    Descends one level into defmodule do_blocks."""
+    Descends into defmodule / defprotocol / defimpl do_blocks — each
+    opens a module scope whose top-level imports are source-true."""
     for node in nodes:
         if node.type != "call":
             continue
         fn = _call_fn_name(node, src)
         if fn in _IMPORT_MACROS:
             _emit_import(node, src, fn, out)
-        elif fn == "defmodule":
+        elif fn in _MODULE_CONTAINER_MACROS:
             do_blk = _do_block(node)
             if do_blk is not None:
                 _collect_imports(do_blk.named_children, src, out)
@@ -692,7 +785,7 @@ def _string_content(node: Node, src: bytes) -> str:
         if c.type == "quoted_content":
             return _text(c, src)
     raw = _text(node, src)
-    return raw[1:-1] if len(raw) >= 2 and raw[0] in '"\'\'''' else raw
+    return raw[1:-1] if len(raw) >= 2 and raw[0] in "\"'" else raw
 
 
 def _doc_start_byte(doc_node: Node, pending: list[str], src: bytes) -> int:

@@ -7,6 +7,41 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.8.0] — 2026-07-03
+
+### Added
+
+- **Elixir support (`.ex` / `.exs`)** via `tree-sitter-elixir`. The
+  adapter was contributed by **Aaron Tavistock** ([@atavistock](https://github.com/atavistock),
+  [PR #7](https://github.com/ast-outline/ast-outline/pull/7)); it was then
+  integrated, hardened, and corpus-validated before release. Mapping:
+  `defmodule` → nested namespaces (not path-collapsed); `def` / `defp`
+  → function / method (`defp` private); `defmacro` / `defguard` /
+  `defdelegate` carry `[macro]` / `[guard]` / `[delegate]` markers;
+  `defprotocol` → interface, `defimpl Name, for: Type` → class;
+  `defstruct` / `defexception` emit one field per key (enforced
+  `:atoms` and `key: default` entries alike); `@type` / `@typep` /
+  `@opaque` → fields; `@callback` → method; `@doc` / `@moduledoc` are
+  absorbed as docs; `use` / `import` / `alias` / `require` are collected
+  as imports (`alias MyApp.{A, B}` expands per name). ExUnit / Phoenix
+  DSL blocks (`describe`, `test`, `scope`, …) surface as named
+  containers. Function clauses of one `(keyword, name, arity)` collapse
+  to a single entry; distinct arities and def-kinds stay separate.
+
+### Fixed
+
+- Hardening applied to the Elixir adapter during integration and a
+  corpus validation across 1,649 files from six major OSS Elixir
+  projects (Elixir stdlib, Phoenix, Ecto, Plug, Credo, Phoenix
+  LiveView): correct `defstruct` keys that carry defaults; `@moduledoc`
+  no longer leaks onto a module's first member; `@doc` survives an
+  intervening `@spec` / `@impl`; clause deduplication keys on arity and
+  def-kind so `foo/1` … `foo/3` are not collapsed; a `def` inside a DSL
+  block inside a module is classified as a method; `@callback` and
+  `@type` names resolve through `when` clauses and paren-less
+  zero-arity forms. The adapter parses the full corpus (35,686
+  declarations) with zero crashes.
+
 ## [1.7.3] — 2026-07-02
 
 ### Fixed

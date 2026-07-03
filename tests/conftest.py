@@ -114,6 +114,11 @@ def gdscript_dir() -> Path:
     return FIXTURES_DIR / "gdscript"
 
 
+@pytest.fixture(scope="session")
+def elixir_dir() -> Path:
+    return FIXTURES_DIR / "elixir"
+
+
 @pytest.fixture(autouse=True)
 def _reset_adapter_lookup_cache():
     """`core._adapter_for_language` is lru_cached at process level; a
