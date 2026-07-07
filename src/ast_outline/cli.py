@@ -1173,7 +1173,8 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
     )
 
 
-def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool) -> int:
+def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool,
+                 lead_note: str = "") -> int:
     """Resolve symbols across several files, then show or point to them.
 
     Collapses the agent's recurring two-call pattern — `grep <symbol>
@@ -1193,6 +1194,10 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
     Exactly one of ``directory`` / ``glob_pattern`` is the non-empty
     user-facing locator string; the other is ``""``. Both ride the JSON
     envelope so a consumer can tell which scope form produced the result.
+
+    ``lead_note`` is an optional advisory printed first (text) or prepended
+    to the JSON ``notes`` — used by the shell-expanded-glob path to tell the
+    agent its glob was expanded and how to quote it.
     """
     locator = directory or glob_pattern
     no_ignore = getattr(args, "no_ignore", False)
@@ -1203,6 +1208,8 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
 
     if json_mode:
         notes = []
+        if lead_note:
+            notes.append(lead_note)
         for symbol, found, suggestions in resolved:
             if not found:
                 notes.append(f"symbol not found: {symbol} in {locator}")
@@ -1228,6 +1235,8 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
         ))
         return 0
 
+    if lead_note:
+        print(f"# note: {lead_note}")
     first_block = True
     for symbol, found, suggestions in resolved:
         if not first_block:
@@ -1260,8 +1269,76 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
     return 0
 
 
+def _detect_expanded_glob(args):
+    """Split ``show``'s positionals into ``(files, symbols)`` when the shell
+    has already expanded an unquoted glob; ``None`` when it hasn't.
+
+    An unquoted `show *.cs Sym` is expanded by the shell *before* argparse,
+    so the extra files land in ``args.symbols`` and would be searched as
+    symbol names — yielding mangled `# note: symbol not found: Foo.cs` lines
+    and looking the real symbol up only in the first file. We recover the
+    agent's actual intent ("find this symbol among these files") — the same
+    intent as a quoted glob or a directory target.
+
+    A file is any positional that both exists on disk AND resolves to a
+    language adapter. The adapter gate (over a bare ``is_file()``) keeps a
+    legitimate one-file `show real.cs Sym` from misfiring when a symbol name
+    happens to collide with a bare file in the cwd: the collision now also
+    has to match a file the tool would actually parse, which is far less
+    likely. We only treat it as an expanded glob when >=2 source files are
+    present — a single file is the ordinary `show file.cs Sym1 Sym2` form and
+    must stay untouched.
+
+    An explicit directory first arg is never an expanded glob (the shell
+    can't expand a bare directory into it), so we bail out and let the
+    directory-target branch handle `show DIR a.cs b.cs`-shaped calls where
+    the trailing names happen to be real files. Files are de-duplicated:
+    two overlapping globs (or a repeated arg) that name the same file twice
+    must not turn one definition into a phantom "2 definitions" ambiguity.
+    """
+    if Path(args.file).is_dir():
+        return None
+    files, symbols = [], []
+    for p in [args.file, *args.symbols]:
+        pp = Path(p)
+        if pp.is_file() and get_adapter_for(pp) is not None:
+            files.append(pp)
+        else:
+            symbols.append(p)
+    if len(files) < 2:
+        return None
+    return sorted(set(files)), symbols
+
+
 def _cmd_show(args) -> int:
     json_mode = getattr(args, "json", False)
+    # Shell-expanded-glob rescue: `show *.cs Sym` (unquoted) reaches us as
+    # first.cs + [rest.cs..., Sym]; re-route to the multi-file resolver so
+    # the symbol is searched across every file, not just the first.
+    expanded = _detect_expanded_glob(args)
+    if expanded is not None:
+        files, symbols = expanded
+        if not symbols:
+            return _emit_error(
+                json_mode, "show",
+                ['glob expanded to multiple files but no symbol given '
+                 '— quote it: show "<glob>" <symbol>'],
+            )
+        args.symbols = symbols
+        n = len(files)
+        note = (
+            f"glob expanded by the shell to {n} file{'s' if n != 1 else ''} "
+            f"— searched all of them; quote it (show \"<glob>\" <symbol>) to "
+            f"keep it a single argument"
+        )
+        # `directory` is the common parent of the matched files (reusing
+        # json_output._common_root, which already computes this for the
+        # JSON envelope) — a display locator, never re-walked.
+        root = json_output._common_root(files) or Path(".")
+        return _show_across(
+            args, files, directory=str(root), glob_pattern="",
+            json_mode=json_mode, lead_note=note,
+        )
     path = Path(args.file)
     # Directory target → locate the symbol's definition(s) ourselves and
     # show the body, instead of the old "path is not a file" dead end.

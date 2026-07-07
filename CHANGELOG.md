@@ -7,6 +7,25 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.8.1] — 2026-07-07
+
+### Fixed
+
+- **`show` recovers from a shell-expanded (unquoted) glob.** Writing
+  `ast-outline show src/*.cs MyClass` without quotes let the shell
+  expand `*.cs` into a file list *before* `show` ran, so the extra
+  files landed in the symbol-name slot: `show` searched them as symbol
+  names — emitting bogus `# note: symbol not found: Other.cs` lines and
+  resolving the real symbol against **only the first file** (silently
+  missing its definitions elsewhere). `show` now detects two or more
+  source-file arguments and searches the symbol across all of them —
+  the same intent as a quoted glob — with a leading note reminding you
+  to quote it. A positional counts as a file only when it exists **and**
+  resolves to a language adapter, so a symbol name colliding with a bare
+  file in the cwd isn't misread. An expansion that leaves no
+  symbol at all gets an explicit note instead of a guess. Exit code
+  stays **0** throughout (mixed absolute/relative paths included).
+
 ## [1.8.0] — 2026-07-03
 
 ### Added

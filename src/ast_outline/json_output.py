@@ -377,6 +377,14 @@ def show_dir_json(
     symbol is an entry with an empty `matches` list (the `notes` field
     carries the did-you-mean suggestion, if any).
 
+    One nuance on `directory`: for a directory target it denotes a full
+    recursive walk of that subtree, but a shell-expanded unquoted glob
+    (`show *.cs Sym`) also lands here with `directory` set to the *common
+    parent of the matched files* — a discrete file list, **not** a
+    completeness guarantee for that directory. A leading `notes` entry
+    flags the expansion; consumers needing the exact scope should read the
+    per-match `file` fields, not infer it from `directory`.
+
     `show` keeps a single-shape contract: it serializes source code *or*
     a pointer, never both. Each result therefore carries an `ambiguous`
     flag:
