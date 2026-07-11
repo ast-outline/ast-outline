@@ -184,7 +184,7 @@ ast-outline prompt | pbcopy   # macOS clipboard
 | SQL        | `.sql` *(PostgreSQL primary; MySQL / SQLite usable)* |
 | HTML       | `.html`, `.htm` *(elements rendered as CSS-selector tokens — `section#hero`, `form[action=/x]`; `<link rel=stylesheet>` / `<script src>` collected as imports; `<script>` / `<style>` / `<!-- -->` filtered from grep by default)* |
 | Vue        | `.vue` *(Single-File Components — `<template>` parsed as HTML, `<script>` as TypeScript, `<style>` as CSS; the three sections merge into one outline; no extra dependency — reuses the existing grammars)* |
-| Markdown   | `.md`, `.markdown`, `.mdx`, `.mdown` |
+| Markdown   | `.md`, `.markdown`, `.mdx`, `.mdown` *(headings → TOC, fenced code blocks per heading; YAML frontmatter surfaces as a `--- frontmatter` node and a `show <file> frontmatter` handle)* |
 | YAML       | `.yaml`, `.yml` *(Kubernetes / OpenAPI / GitHub Actions detected)* |
 
 Per-adapter feature detail (which constructs each adapter recognises, how

@@ -127,6 +127,53 @@ def test_show_single_symbol(csharp_dir, capsys):
     assert "OnHealthChanged" in out  # part of the method body
 
 
+def test_show_frontmatter_resolves_across_directory(tmp_path, capsys):
+    """`show <dir> frontmatter` must resolve even though `frontmatter` is a
+    synthetic name that never appears literally in source — the grep
+    def-prefilter can't find it, so the resolver falls back to a direct
+    scan. This is the feature's headline batch use case (point `show` at
+    a folder of task cards / notes to read their metadata blocks)."""
+    (tmp_path / "card.md").write_text(
+        "---\nid: TC-1\nstatus: todo\n---\n", encoding="utf-8"
+    )
+    rc = main(["show", str(tmp_path), "frontmatter"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "id: TC-1" in out  # the raw block body was returned
+
+
+def test_show_frontmatter_absent_across_directory_notes(tmp_path, capsys):
+    """The synthetic-name fallback must not false-resolve: a directory of
+    markdown files with no frontmatter still returns `# note:` + rc 0."""
+    (tmp_path / "plain.md").write_text("# Just a heading\n", encoding="utf-8")
+    rc = main(["show", str(tmp_path), "frontmatter"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "# note:" in out
+    assert "not found" in out
+
+
+def test_show_frontmatter_survives_heading_collision(tmp_path, capsys):
+    """Regression: a stray heading containing the word `frontmatter` must
+    NOT mask real frontmatter blocks in sibling files. The synthetic-name
+    scan runs unconditionally and unions with the grep pre-filter, so the
+    heading match and both cards' blocks all surface — never silent loss.
+    """
+    (tmp_path / "a.md").write_text("---\nid: TC-1\n---\n", encoding="utf-8")
+    (tmp_path / "b.md").write_text("---\nid: TC-2\n---\n", encoding="utf-8")
+    # This heading literally contains "frontmatter" → the grep def-prefilter
+    # hits it, which used to short-circuit the fallback and drop a.md/b.md.
+    (tmp_path / "c.md").write_text("# Notes about frontmatter\n", encoding="utf-8")
+    rc = main(["show", str(tmp_path), "frontmatter"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # Ambiguous → disambiguation note listing ALL three, cards included.
+    assert "3 definitions" in out
+    assert "a.md" in out
+    assert "b.md" in out
+    assert "c.md" in out
+
+
 def test_show_prints_ancestor_breadcrumb(csharp_dir, capsys):
     """The `# in:` line lists enclosing namespace/type so the agent knows
     what the extracted body is nested inside, without a second `outline`."""

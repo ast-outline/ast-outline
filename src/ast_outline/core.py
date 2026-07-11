@@ -49,6 +49,12 @@ KIND_BLOCK = "block"
 # Non-code (narrative) document kinds — currently used by the markdown adapter
 KIND_HEADING = "heading"
 KIND_CODE_BLOCK = "code_block"
+# YAML frontmatter block (`---\n…\n---`) at the head of a markdown file.
+# One flat node whose byte range spans the whole block so `show <file>
+# frontmatter` returns the raw metadata; not counted as a heading. Kept
+# distinct from `KIND_YAML_KEY` because it's an opaque embedded block
+# from markdown's point of view, not a parsed YAML tree.
+KIND_FRONTMATTER = "frontmatter"
 
 # Data/config document kinds — used by the YAML adapter. One canonical
 # kind covers every YAML construct (mapping key, sequence item, scalar
@@ -140,6 +146,14 @@ class Declaration:
     # for code adapters). When non-empty, the search walker uses the
     # matched entry as the qualified name in the resulting `SymbolMatch`.
     match_names: list[str] = field(default_factory=list)
+    # Extra display names surfaced ONLY by `digest --format=names`, never
+    # by outline / digest-TOC / counts / show. Used by the markdown
+    # adapter to carry a frontmatter block's top-level keys (`id`,
+    # `status`, …) so the terse names view lists a metadata-only card's
+    # schema, without those keys leaking into the default outline as
+    # child rows. Empty for every other kind. Generic on purpose — the
+    # adapter fills it, core just prints it (no per-language branch).
+    extra_names: list[str] = field(default_factory=list)
 
     # Convenience: rendered line suffix for line-range display
     def lines_suffix(self) -> str:
@@ -1294,9 +1308,17 @@ def _digest_one_names(result: ParseResult, opts: DigestOptions) -> list[str]:
 
     family = _render_family(result.language)
     if family == "markdown":
-        # Top-level headings only (children are nested H2+ — not
-        # listed here to keep the line tight).
-        headlines = [
+        # Frontmatter keys first (a metadata-only card's whole schema —
+        # otherwise its names line would be empty), then top-level
+        # headings (children are nested H2+ — not listed here to keep the
+        # line tight). Keys ride in `extra_names`, filled by the adapter;
+        # they surface ONLY in names, never in the default outline.
+        fm_keys: list[str] = []
+        for d in result.declarations:
+            if d.kind == KIND_FRONTMATTER:
+                fm_keys = list(d.extra_names)
+                break
+        headlines = fm_keys + [
             d.signature.lstrip("# ").strip() or d.name
             for d in result.declarations
             if d.kind == KIND_HEADING
@@ -1797,6 +1819,16 @@ def _digest_markdown(
                 flags.line_range = True
             out.append(pad + d.signature + suffix)
             out.extend(_digest_markdown(d.children, opts, indent + 2, depth + 1, flags=flags))
+        elif d.kind == KIND_FRONTMATTER:
+            # Emitted unconditionally (unlike code blocks): the frontmatter
+            # is a structural signal, not TOC noise, and for metadata-only
+            # files (task cards, notes) it's the ONLY signal — gating it
+            # behind include_fields would leave `digest` printing `# empty`
+            # for exactly the files this node exists to surface.
+            suffix = d.lines_suffix()
+            if suffix and flags is not None:
+                flags.line_range = True
+            out.append(pad + d.signature + suffix)
         elif d.kind == KIND_CODE_BLOCK and opts.include_fields:
             suffix = d.lines_suffix()
             if suffix and flags is not None:

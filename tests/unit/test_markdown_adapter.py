@@ -6,10 +6,12 @@ import pytest
 from ast_outline.adapters.markdown import MarkdownAdapter
 from ast_outline.core import (
     KIND_CODE_BLOCK,
+    KIND_FRONTMATTER,
     KIND_HEADING,
     Declaration,
     DigestOptions,
     OutlineOptions,
+    find_symbols,
     render_digest,
     render_outline,
 )
@@ -213,6 +215,127 @@ def test_digest_marks_empty_file(md_dir):
     r = MarkdownAdapter().parse(md_dir / "empty.md")
     out = render_digest([r], DigestOptions())
     assert "# empty" in out
+
+
+# --- YAML frontmatter ----------------------------------------------------
+
+
+def test_frontmatter_becomes_named_declaration(md_dir):
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_and_headings.md")
+    fm = _find(r.declarations, kind=KIND_FRONTMATTER)
+    assert fm is not None
+    assert fm.name == "frontmatter"
+    assert fm.signature == "--- frontmatter"
+    # Block starts at the very top of the file.
+    assert fm.start_line == 1
+    # It's a top-level sibling of the headings, not nested inside one.
+    assert fm in r.declarations
+    # The headings are still parsed alongside it.
+    assert _find(r.declarations, kind=KIND_HEADING, name="Main Title") is not None
+
+
+def test_frontmatter_only_file_is_not_empty(md_dir):
+    # The boardown-card case: a file whose entire signal lives in the
+    # frontmatter, with no headings. Before frontmatter support the
+    # outline was empty; now it surfaces the block.
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_only.md")
+    assert _find(r.declarations, kind=KIND_HEADING) is None
+    fm = _find(r.declarations, kind=KIND_FRONTMATTER)
+    assert fm is not None
+    out = render_outline(r, OutlineOptions())
+    assert "--- frontmatter" in out
+
+
+def test_frontmatter_not_counted_as_heading(md_dir):
+    # The digest/outline header counts headings; frontmatter must not
+    # inflate that count.
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_and_headings.md")
+    out = render_digest([r], DigestOptions())
+    assert "2 headings" in out
+    assert "3 headings" not in out
+
+
+def test_show_frontmatter_returns_raw_block(md_dir):
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_only.md")
+    matches = find_symbols(r, "frontmatter")
+    assert len(matches) == 1
+    src = matches[0].source
+    # Raw block including both `---` fences and the embedded YAML.
+    assert src.startswith("---")
+    assert src.rstrip().endswith("---")
+    assert "id: TC-56" in src
+
+
+def test_stray_horizontal_rule_is_not_frontmatter(tmp_path):
+    # A `---` that isn't a top-of-file fence is a thematic break, not
+    # metadata — tree-sitter never emits `minus_metadata` for it, so no
+    # frontmatter node should appear.
+    p = tmp_path / "stray.md"
+    p.write_text("# Title first\n---\nid: nope\n", encoding="utf-8")
+    r = MarkdownAdapter().parse(p)
+    assert _find(r.declarations, kind=KIND_FRONTMATTER) is None
+    # The real heading is still there.
+    assert _find(r.declarations, kind=KIND_HEADING, name="Title first") is not None
+
+
+def test_show_frontmatter_absent_returns_no_match(md_dir):
+    # `show <file> frontmatter` on a file without a frontmatter block
+    # must resolve to nothing (the CLI turns this into a `# note:` +
+    # exit 0), never a crash.
+    r = MarkdownAdapter().parse(md_dir / "readme_style.md")
+    assert find_symbols(r, "frontmatter") == []
+
+
+def test_digest_surfaces_frontmatter_for_metadata_only_file(md_dir):
+    # The default `digest` TOC renderer is a separate consumer from
+    # `outline`; a metadata-only card must not fall through to `# empty`
+    # there either. Frontmatter shows unconditionally (no include_fields).
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_only.md")
+    out = render_digest([r], DigestOptions())
+    assert "--- frontmatter" in out
+    assert "# empty" not in out
+
+
+def test_digest_names_surfaces_frontmatter_keys(md_dir):
+    # `--format=names` lists a card's schema — its top-level frontmatter
+    # keys — the same way it lists a standalone YAML file's top-level keys.
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_only.md")
+    out = render_digest([r], DigestOptions(format="names"))
+    assert "id, type, status, order" in out
+
+
+def test_frontmatter_keys_stay_out_of_default_outline_and_digest(md_dir):
+    # Keys surface ONLY in names — the default outline / digest show just
+    # the `--- frontmatter` marker, never the keys as their own rows.
+    r = MarkdownAdapter().parse(md_dir / "frontmatter_only.md")
+    outline = render_outline(r, OutlineOptions())
+    digest = render_digest([r], DigestOptions())
+    for view in (outline, digest):
+        assert "--- frontmatter" in view
+        assert "status" not in view
+        assert "order" not in view
+
+
+def test_frontmatter_keys_are_top_level_only(tmp_path):
+    # Naive key scan: indented (nested) keys and block-scalar bodies must
+    # not be mistaken for top-level keys.
+    p = tmp_path / "c.md"
+    p.write_text(
+        "---\ntitle: Hi\nmeta:\n  nested: x\ntags: [a, b]\n---\n", encoding="utf-8"
+    )
+    r = MarkdownAdapter().parse(p)
+    fm = _find(r.declarations, kind=KIND_FRONTMATTER)
+    assert fm.extra_names == ["title", "meta", "tags"]
+
+
+def test_frontmatter_keys_deduped(tmp_path):
+    # Malformed YAML with a repeated top-level key must not render
+    # `id, id` in the names view — collapse to first occurrence.
+    p = tmp_path / "dup.md"
+    p.write_text("---\nid: 1\nid: 2\nstatus: x\n---\n", encoding="utf-8")
+    r = MarkdownAdapter().parse(p)
+    fm = _find(r.declarations, kind=KIND_FRONTMATTER)
+    assert fm.extra_names == ["id", "status"]
 
 
 # --- noise_regions for fenced code blocks --------------------------------

@@ -75,6 +75,13 @@ class LanguageAdapter(Protocol):
     #     Declared only by adapters whose language routinely ships as
     #     extensionless unix CLI scripts; consumed by
     #     ``adapters.get_adapter_for``.
+    # ``synthetic_symbol_names: frozenset[str]`` (Markdown ``frontmatter``)
+    #     — ``show`` handles the adapter assigns whose text never appears
+    #     literally in the source (a frontmatter block opens with ``---``,
+    #     not the word ``frontmatter``). Multi-file ``show`` pre-filters
+    #     candidate files with a ``grep`` def-scan on the name, which can
+    #     never hit a synthetic name; ``cli._resolve_one_symbol`` reads
+    #     this set to fall back to a direct scan for exactly these names.
 
     def parse(self, path: Path) -> ParseResult: ...
 

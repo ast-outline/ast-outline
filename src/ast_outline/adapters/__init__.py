@@ -198,6 +198,19 @@ def supported_shebang_programs() -> list[str]:
     return sorted(out)
 
 
+def supported_synthetic_symbol_names() -> frozenset[str]:
+    """Union of the synthetic ``show`` handles the adapters claim — names
+    whose text never appears literally in source (e.g. Markdown
+    ``frontmatter``). ``cli._resolve_one_symbol`` checks this before the
+    directory-scan fallback so a normal missing-symbol lookup pays no
+    extra walk — only a query that IS a synthetic name triggers it. Same
+    no-drift rationale as ``supported_shebang_programs``."""
+    out: set[str] = set()
+    for a in ADAPTERS:
+        out.update(getattr(a, "synthetic_symbol_names", frozenset()))
+    return frozenset(out)
+
+
 def get_adapter_for(path: Path) -> Optional[LanguageAdapter]:
     """Resolve the adapter for ``path`` by suffix first, then by exact
     basename, then — for extensionless files only — by shebang. The

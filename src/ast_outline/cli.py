@@ -29,6 +29,7 @@ from .adapters import (
     supported_extensions,
     supported_languages,
     supported_shebang_programs,
+    supported_synthetic_symbol_names,
 )
 from .core import (
     DigestOptions,
@@ -1088,12 +1089,75 @@ def _resolve_one_symbol(symbol, search_paths, *, no_ignore, exclude):
             continue
         for m in find_symbols(parsed, symbol):
             found.append((fr.path, m))
+    if name in supported_synthetic_symbol_names():
+        # A synthetic name (Markdown `frontmatter`) never appears in source
+        # — its block opens with `---` — so the grep def-prefilter above
+        # can't find its files. And if grep DOES hit an unrelated heading
+        # that merely contains the word, an `if not found` guard would let
+        # that stray match mask the real blocks entirely (silent loss).
+        # So the direct scan runs UNCONDITIONALLY for these names and its
+        # results are unioned with the prefiltered ones, deduped by
+        # (path, line-range). Gated on the synthetic set so an ordinary
+        # missing symbol never pays this second walk.
+        found = _merge_matches(
+            found,
+            _resolve_synthetic_symbol(
+                symbol, name, search_paths, no_ignore=no_ignore, exclude=exclude
+            ),
+        )
     suggestions = []
     if not found:
         suggestions = suggest_similar_symbols(
             symbol, search_paths, no_ignore=no_ignore, exclude=exclude
         )
     return found, suggestions
+
+
+def _merge_matches(primary, extra):
+    """Union two ``(path, SymbolMatch)`` lists, dropping duplicates by
+    ``(path, line-range, kind)`` — the same node can surface from both the
+    grep pre-filter and the synthetic-name scan (e.g. a card whose heading
+    also contains the word). ``kind`` is in the key so two structurally
+    different declarations that happen to share a line range (a future
+    synthetic name could allow it) both survive — dropping one would
+    reintroduce the silent-loss this merge exists to prevent.
+    Order-preserving: prefiltered matches first."""
+    seen = {(str(p), m.start_line, m.end_line, m.kind) for p, m in primary}
+    out = list(primary)
+    for p, m in extra:
+        key = (str(p), m.start_line, m.end_line, m.kind)
+        if key not in seen:
+            seen.add(key)
+            out.append((p, m))
+    return out
+
+
+def _resolve_synthetic_symbol(symbol, name, search_paths, *, no_ignore, exclude):
+    """Directory/glob `show` fallback for synthetic symbol names.
+
+    Walks the same files ``grep`` would, but parses only those whose
+    adapter declares ``name`` synthetic (so a Markdown-only handle never
+    triggers a parse of unrelated languages), then runs the authoritative
+    ``find_symbols``. Returns the same ``(file_path, SymbolMatch)`` list
+    shape as the grep-pre-filtered path.
+    """
+    collected = collect_files_with_stats(
+        search_paths, no_ignore=no_ignore, exclude=exclude
+    )
+    found = []
+    for path in collected.files:
+        adapter = get_adapter_for(path)
+        if adapter is None:
+            continue
+        if name not in getattr(adapter, "synthetic_symbol_names", frozenset()):
+            continue
+        try:
+            parsed = adapter.parse(path)
+        except Exception:
+            continue
+        for m in find_symbols(parsed, symbol):
+            found.append((path, m))
+    return found
 
 
 def _resolve_symbols_across(args, search_paths, *, no_ignore, exclude):

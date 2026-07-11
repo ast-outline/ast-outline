@@ -181,7 +181,7 @@ ast-outline prompt | pbcopy   # macOS 剪贴板
 | SQL        | `.sql` *（主要面向 PostgreSQL；MySQL / SQLite 可用）* |
 | HTML       | `.html`、`.htm` *（元素渲染为 CSS 选择器 token — `section#hero`、`form[action=/x]`；`<link rel=stylesheet>` / `<script src>` 收集为导入；`<script>` / `<style>` / `<!-- -->` 默认从 grep 中过滤）* |
 | Vue        | `.vue` *（单文件组件 — `<template>` 按 HTML 解析，`<script>` 按 TypeScript，`<style>` 按 CSS；三个部分合并为一个 outline；无额外依赖 — 复用现有语法）* |
-| Markdown   | `.md`、`.markdown`、`.mdx`、`.mdown` |
+| Markdown   | `.md`、`.markdown`、`.mdx`、`.mdown` *（标题 → 目录，代码块按标题归类；YAML frontmatter 呈现为 `--- frontmatter` 节点及 `show <file> frontmatter` 句柄）* |
 | YAML       | `.yaml`、`.yml` *（自动识别 Kubernetes / OpenAPI / GitHub Actions）* |
 
 各适配器识别的具体语法（识别哪些结构、如何渲染继承、什么会被收集到

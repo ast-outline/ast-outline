@@ -7,6 +7,27 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.8.2] — 2026-07-11
+
+### Added
+
+- **Markdown YAML frontmatter surfaces in the outline.** A `---…---`
+  metadata block at the top of a `.md` file — task cards (`id` / `type`
+  / `status`), Jekyll / Hugo / Astro / Docusaurus pages, Obsidian notes
+  — used to be invisible to `outline` and `digest`, so a file whose
+  entire signal lives in its frontmatter rendered empty. It now shows as
+  a single `--- frontmatter` node with its line range (across `outline`
+  and every `digest` format), and is a `show` handle:
+  `ast-outline show card.md frontmatter` prints the raw block, and
+  `ast-outline show cards/ frontmatter` locates every card's block
+  across a directory in one call. `digest --format=names` additionally
+  lists a card's top-level keys (`id, type, status`) as its symbols —
+  the terse schema view a standalone YAML file already gets — but only
+  in that format, not the default outline. The embedded YAML is left
+  opaque (values stay `grep`-able where they already were, not parsed
+  into a tree); only a `---` fence on the file's first line counts, a
+  `---` elsewhere stays an ordinary horizontal rule.
+
 ## [1.8.1] — 2026-07-07
 
 ### Fixed

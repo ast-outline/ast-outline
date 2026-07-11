@@ -189,7 +189,7 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
 | SQL        | `.sql` *(основной target — PostgreSQL; MySQL / SQLite — рабочие)* |
 | HTML       | `.html`, `.htm` *(элементы рендерятся как CSS-селекторные токены — `section#hero`, `form[action=/x]`; `<link rel=stylesheet>` / `<script src>` собираются как импорты; `<script>` / `<style>` / `<!-- -->` по умолчанию отфильтрованы из grep)* |
 | Vue        | `.vue` *(Single-File Components — `<template>` парсится как HTML, `<script>` как TypeScript, `<style>` как CSS; три секции сливаются в один outline; без доп. зависимости — переиспользует существующие грамматики)* |
-| Markdown   | `.md`, `.markdown`, `.mdx`, `.mdown` |
+| Markdown   | `.md`, `.markdown`, `.mdx`, `.mdown` *(заголовки → оглавление, fenced-блоки кода по заголовкам; YAML-frontmatter показывается как узел `--- frontmatter` и хэндл `show <file> frontmatter`)* |
 | YAML       | `.yaml`, `.yml` *(автоопределение Kubernetes / OpenAPI / GitHub Actions)* |
 
 Подробности по каждому адаптеру (какие конструкции распознаются, как

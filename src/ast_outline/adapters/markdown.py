@@ -25,9 +25,19 @@ Design:
   the `=`/`-` underline for setext headings.
 - `signature` is `#` * level + " " + title, so the outline is
   immediately readable as markdown itself.
+- A YAML frontmatter block (`---\n…\n---`) at the very top of the file —
+  tree-sitter's `minus_metadata` node — becomes one flat
+  KIND_FRONTMATTER declaration named ``frontmatter``. It's the densest
+  part of task-card / static-site / note files, and would otherwise be
+  invisible in the outline. The embedded YAML is left opaque (not
+  parsed into a tree); the byte range spans the whole fence so
+  `show <file> frontmatter` returns it raw. Its top-level keys are
+  scanned into ``extra_names`` for `digest --format=names` only — they
+  never appear in the default outline.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +47,7 @@ from tree_sitter import Language, Node, Parser
 from .base import count_parse_errors
 from ..core import (
     KIND_CODE_BLOCK,
+    KIND_FRONTMATTER,
     KIND_HEADING,
     Declaration,
     ParseResult,
@@ -56,6 +67,10 @@ class MarkdownAdapter:
     comment_line_prefixes = ()
     import_line_prefixes = ()
     render_family = "markdown"
+    # `frontmatter` is a synthetic `show` handle — the block opens with
+    # `---`, so the name never appears literally in source and the
+    # multi-file `show` grep pre-filter can't find it. See base.py.
+    synthetic_symbol_names = frozenset({"frontmatter"})
 
     def parse(self, path: Path) -> ParseResult:
         src = path.read_bytes()
@@ -146,6 +161,12 @@ def _walk(node: Node, src: bytes, out: list[Declaration]) -> None:
         elif child.type == "fenced_code_block":
             # A code block at document top, before any heading
             out.append(_code_block_to_decl(child, src))
+        elif child.type == "minus_metadata":
+            # YAML frontmatter (`---\n…\n---`). tree-sitter-markdown only
+            # emits this node when the `---` fence sits at the very top of
+            # the file, so a stray `---` mid-document parses as a thematic
+            # break, not metadata, and never reaches here.
+            out.append(_frontmatter_to_decl(child, src))
 
 
 def _section_to_decl(node: Node, src: bytes) -> Optional[Declaration]:
@@ -253,6 +274,66 @@ def _code_block_to_decl(node: Node, src: bytes) -> Declaration:
         start_byte=node.start_byte,
         end_byte=node.end_byte,
         doc_start_byte=node.start_byte,
+    )
+
+
+_FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z0-9_-]+):")
+
+
+def _frontmatter_keys(node: Node, src: bytes) -> list[str]:
+    """Top-level YAML keys of a frontmatter block, in source order, deduped.
+
+    Naive by design — a key is a line that starts (no leading indent) with
+    an identifier followed by a colon. This surfaces the metadata *schema*
+    (`id`, `type`, `status`) without pulling in a YAML parser: nested keys
+    are indented so they don't match, and a multi-line block scalar's body
+    is indented too. Values are ignored entirely — they stay `grep`-able
+    where they already were; the point here is the shape, not the data.
+
+    Two deliberate omissions: quoted (`"my key":`) and non-ASCII keys fall
+    outside the identifier class and are dropped — frontmatter schemas are
+    conventionally bare ASCII identifiers, and this view is a hint, not an
+    authoritative parse. Repeated keys (malformed YAML) collapse to their
+    first occurrence so the names line never shows `id, id`.
+    """
+    text = src[node.start_byte : node.end_byte].decode("utf8", errors="replace")
+    keys: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        m = _FRONTMATTER_KEY_RE.match(line)
+        if m:
+            key = m.group(1)
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
+def _frontmatter_to_decl(node: Node, src: bytes) -> Declaration:
+    """Represent a YAML frontmatter block (`minus_metadata`) as one flat
+    KIND_FRONTMATTER declaration.
+
+    The block is opaque from markdown's point of view — we don't parse the
+    embedded YAML into a tree. `name` is the fixed handle ``frontmatter``
+    so an agent can `ast-outline show <file> frontmatter` to pull the raw
+    block; the byte range spans the whole `---…---` fence including both
+    delimiters. `signature` mirrors the opening fence so the outline line
+    reads like the markdown it stands for (``--- frontmatter  L1-6``). The
+    top-level keys ride along in ``extra_names`` so `digest --format=names`
+    can list a metadata-only card's schema — but only there, never in the
+    default outline.
+    """
+    return Declaration(
+        kind=KIND_FRONTMATTER,
+        name="frontmatter",
+        signature="--- frontmatter",
+        visibility="public",
+        start_line=node.start_point[0] + 1,
+        end_line=_end_line(node),
+        start_byte=node.start_byte,
+        end_byte=node.end_byte,
+        doc_start_byte=node.start_byte,
+        extra_names=_frontmatter_keys(node, src),
     )
 
 
