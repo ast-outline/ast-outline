@@ -5,7 +5,7 @@ trigger: [docs-sync, cross-repo, readme-translation, supported-languages-table, 
 target: "docs-sync for a user-visible capability change (new language adapter, new digest marker/kind, format change) is declared complete against the file(s) explicitly named by the task/ticket or by AGENTS.md's per-category sync-table row alone — silently skips this repo's translated READMEs (README.ru.md, README.zh-CN.md) and/or docs-site pages not named for that row (docs/index.md, docs/history.md), because AGENTS.md's 'when to also update the docs site' table is scoped per change-category and does not enumerate every known copy for every category, and it never mentions this repo's own translated READMEs at all"
 status: active
 evidence:
-  hits: 4
+  hits: 5
   situations:
     - id: s-2026-05-17-lua-readme-miss
       provenance: "commit f963bb7 (2026-05-17) — 'docs(README): add Lua row ... missed in the v0.9.0 release pass'; README.md's supported-languages table left stale at the v0.9.0 release, caught and fixed after the fact."
@@ -15,6 +15,8 @@ evidence:
       provenance: "commit a7c9f80 (2026-07-03) — 'README.ru.md and README.zh-CN.md had drifted behind the English table — missing Elixir, GDScript, HTML and Vue.' Four separate prior language releases (v1.0.0 HTML, v1.5.0 GDScript, v1.7.0 Vue, v1.8.0 Elixir) each updated README.md but not the translated copies; caught and batch-fixed in one sweep, not per-release."
     - id: s-2026-07-11-ao3-docs-sync-partial-scope
       provenance: "session 2026-07-11, AO-3 markdown-frontmatter/digest-marker task, r5 per dmitry-manager ledger: 'докс-синк AO-3 заявлен полным, реально закрыв только прямо названные в задаче места (README.md, output-format.md, commands.md), пропустив параллельные копии той же таблицы/факта (index.md, history.md, README.ru/zh-CN)'. Matches AGENTS.md's table exactly: the 'digest marker' row names only docs/output-format.md, not docs/index.md or docs/history.md — the task's scope was already AGENTS.md-table-consistent and still incomplete. Caught by dmitry-manager review, not by the task's definition-of-done."
+    - id: s-2026-07-28-ao9-11-plan-scope-miss
+      provenance: "сессия s-5c0274 (2026-07-28), PLAN-GATE r1 dmitry-manager: план хода помянул docs-sync только для волн 3/4, тогда как AO-9/AO-10/AO-11 в ВОЛНЕ 1 меняют output structure / note-stream, задокументированные в `../ast-outline.github.io/docs/output-format.md:1127-1134`, `docs/output-format.md:240`, `docs/commands.md:303/670/970/1005`. Механизм тот же (полнота docs-sync выведена из явно названного, а не из того, что реально меняется), но сработал на ПЛАНЕ и был перехвачен гейтом до исполнения — ущерба нет, повтор механизма есть."
   helped: null
   refuted: 0
 born: 2026-07-11
