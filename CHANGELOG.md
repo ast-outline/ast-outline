@@ -112,6 +112,13 @@ from real agent sessions.
   diagnosis and its rescue rather than being told it mistyped a
   subcommand.
 
+- **Windows: the new rescue hints printed backslash paths.** The
+  path-not-found repair rendered its paths through `str(Path)`, so on
+  Windows it suggested `The Sorting Bureau\spaced.py` and named
+  `Bureau\spaced.py` in its notes. Every other path in the output has
+  gone through the posix-spelling helper since v1.8.3; these new call
+  sites missed it. Caught by CI before release.
+
 ### Changed
 
 - **The `show` body header no longer spells the location as
