@@ -117,7 +117,10 @@ def test_grep_finds_translation_keys_in_string_literals(tmp_path: Path) -> None:
         '  fire: "Раздув углей",\n'
         '  embertide: "Embertide event",\n'
         '  day: "День 1",\n'
-        '};\n'
+        '};\n',
+        # Explicit: the default is the locale encoding, which is cp1252
+        # on Windows and cannot represent this fixture.
+        encoding="utf-8",
     )
     # Values inside string literals — the previously-hidden class.
     for pattern in ("День", "Раздув углей", "Embertide event"):
@@ -1484,9 +1487,9 @@ def test_cli_files_only_output(tmp_path: Path) -> None:
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
     # Only files containing 'save' should be listed; c.py absent.
     paths = set(lines)
-    assert str(src1) in paths
-    assert str(src2) in paths
-    assert str(src3) not in paths
+    assert src1.as_posix() in paths
+    assert src2.as_posix() in paths
+    assert src3.as_posix() not in paths
     # No scope-tree leakage — output must not contain `## matches` or `>`.
     assert "## matches" not in output
     assert "> L" not in output
@@ -1636,8 +1639,8 @@ def test_cli_max_count_with_files_only_lists_capped_file(tmp_path: Path) -> None
     src2.write_text("def other(): pass\n")
     output = _run_cli("grep", "-l", "-m", "1", "save", str(tmp_path))
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
-    assert str(src1) in lines
-    assert str(src2) not in lines
+    assert src1.as_posix() in lines
+    assert src2.as_posix() not in lines
 
 
 def test_cli_max_count_rejects_zero_and_negative(tmp_path: Path) -> None:
@@ -1919,8 +1922,8 @@ def test_cli_kind_filter_excludes_files_with_no_matching_kind(
     src2.write_text("def use():\n    save()\n    save()\n")
     output = _run_cli("grep", "-l", "--kind", "def", "save", str(tmp_path))
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
-    assert str(src1) in lines
-    assert str(src2) not in lines
+    assert src1.as_posix() in lines
+    assert src2.as_posix() not in lines
 
 
 def test_cli_kind_filter_zero_results_hints_at_excluded_kinds(
