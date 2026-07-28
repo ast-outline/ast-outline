@@ -21,14 +21,13 @@ in long decline and would need a separate grammar.
 """
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Optional
 
 import tree_sitter_scss as tssscss
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, load_language
 from ._css_base import (
     AT_RULE_STATEMENT_TYPES,
     at_rule_signature,
@@ -53,15 +52,12 @@ from ..core import (
 )
 
 
-# tree-sitter-scss 1.0.0 returns its language handle as a raw int,
-# which the tree-sitter Python binding still accepts but flags with a
-# DeprecationWarning. The fix has to land upstream in tree-sitter-scss
-# (it would need to expose a typed PyCapsule the way tree-sitter-css
-# does); until then we silence the warning at import time so the test
-# suite stays warning-clean.
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    _LANGUAGE = Language(tssscss.language())
+# tree-sitter-scss 1.0.0 returns its language handle as a raw int
+# instead of the typed PyCapsule tree-sitter-css exposes. Feeding that
+# int straight to ``Language()`` crashes on 64-bit Windows and warns
+# everywhere else — ``load_language`` wraps it in a capsule first. See
+# its docstring for the full story.
+_LANGUAGE = load_language(tssscss.language())
 _PARSER = Parser(_LANGUAGE)
 
 

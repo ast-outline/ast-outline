@@ -1,10 +1,11 @@
 """Adapter protocol + shared helpers reused by every tree-sitter adapter."""
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
 from typing import Protocol
 
-from tree_sitter import Node
+from tree_sitter import Language, Node
 
 from ..core import ParseResult
 
@@ -84,6 +85,46 @@ class LanguageAdapter(Protocol):
     #     this set to fall back to a direct scan for exactly these names.
 
     def parse(self, path: Path) -> ParseResult: ...
+
+
+# PyCapsule_New does not copy the name — it stores the pointer we hand
+# it, so the bytes object has to outlive every capsule we build. Module
+# level keeps it alive for the life of the process.
+_LANGUAGE_CAPSULE_NAME = b"tree_sitter.Language"
+
+_PyCapsule_New = ctypes.pythonapi.PyCapsule_New
+_PyCapsule_New.restype = ctypes.py_object
+_PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
+
+
+def load_language(handle: object) -> Language:
+    """Build a `Language` from a grammar package's `language()` handle.
+
+    Current grammar packages return a typed `PyCapsule`, which
+    `Language()` takes as-is. A few still return the raw `TSLanguage *`
+    as a Python `int` (tree-sitter-scss 1.0.0 is the one we depend on) —
+    a path `Language()` accepts but marks deprecated, and which
+    tree-sitter 0.26.0 reads back through `PyLong_AsUnsignedLong`. On
+    64-bit Windows `unsigned long` is 32 bits while pointers are 64, so
+    every real address overflows and importing the adapter dies with
+
+        OverflowError: Python int too large to convert to C unsigned long
+
+    (our issue #8; upstream py-tree-sitter #469, fixed on master after
+    0.26.0 but unreleased). Re-wrapping the int in a capsule ourselves
+    keeps the pointer pointer-sized all the way down, so the outcome no
+    longer depends on the installed tree-sitter or on `sizeof(long)`.
+
+    Only the adapters that need it call this — a grammar that starts
+    returning an int would still slip through, which is what
+    `test_language_loading` guards against. When every grammar we depend
+    on ships a capsule, this helper has no work left to do and should be
+    deleted rather than left standing.
+    """
+    if not isinstance(handle, int):
+        return Language(handle)
+    capsule = _PyCapsule_New(ctypes.c_void_p(handle), _LANGUAGE_CAPSULE_NAME, None)
+    return Language(capsule)
 
 
 def count_parse_errors(root: Node) -> int:

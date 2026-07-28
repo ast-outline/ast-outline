@@ -7,6 +7,28 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.8.3] — 2026-07-28
+
+### Fixed
+
+- **Crash on startup on 64-bit Windows** ([#8](https://github.com/ast-outline/ast-outline/issues/8)).
+  With `tree-sitter` 0.26.0 installed, every command — even
+  `ast-outline help` — died at import time with
+  `OverflowError: Python int too large to convert to C unsigned long`,
+  raised while loading the SCSS grammar. `tree-sitter-scss` 1.0.0 is the
+  only grammar we depend on that still hands out its language handle as
+  a raw pointer-valued `int` rather than a typed `PyCapsule`, and
+  tree-sitter 0.26.0 started converting that int back through
+  `PyLong_AsUnsignedLong` — 32 bits on Win64 against 64-bit pointers, so
+  any real address overflowed. Linux and macOS were unaffected because
+  `unsigned long` is 64 bits there. The handle is now wrapped in a
+  proper `tree_sitter.Language` capsule before it reaches `Language()`,
+  so the deprecated int path is never taken and the result no longer
+  depends on the installed tree-sitter version or on `sizeof(long)`.
+  The underlying tree-sitter bug is
+  [py-tree-sitter#469](https://github.com/tree-sitter/py-tree-sitter/issues/469),
+  fixed upstream but not yet released.
+
 ## [1.8.2] — 2026-07-11
 
 ### Added
