@@ -105,7 +105,11 @@ def test_outline_no_lines_flag(csharp_dir, capsys):
 
 def test_outline_missing_file_returns_zero_with_note(tmp_path, capsys):
     """LLM-friendly mode: rc=0 + short ``# note:`` line on stdout so a
-    parallel batch in Claude Code doesn't abort the whole chain."""
+    parallel batch in Claude Code doesn't abort the whole chain.
+
+    The path is spelled with forward slashes even on Windows — the whole
+    output has done that since v1.8.3, and a note is output like any
+    other line."""
     nope = tmp_path / "nope.cs"
     rc = main(["outline", str(nope)])
     captured = capsys.readouterr()
@@ -113,7 +117,7 @@ def test_outline_missing_file_returns_zero_with_note(tmp_path, capsys):
     assert captured.err == ""
     assert "# note:" in captured.out
     assert "path not found" in captured.out.lower()
-    assert str(nope) in captured.out
+    assert nope.as_posix() in captured.out
 
 
 # --- show ----------------------------------------------------------------
