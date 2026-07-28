@@ -16,13 +16,16 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 
+from ast_outline.adapters import get_adapter_for
 from ast_outline.adapters.go import GoAdapter
 from ast_outline.cli import main
 from ast_outline.core import (
     Declaration,
+    OutlineOptions,
     ParseResult,
     _strip_cr,
     display_path,
+    render_outline,
 )
 from ast_outline.json_output import _rel_path
 
@@ -194,14 +197,37 @@ def _every_path_value(node):
             yield from _every_path_value(item)
 
 
-def test_strip_cr_keeps_lone_carriage_returns_as_line_breaks():
-    """Trailing CRLF debris goes; a lone `\\r` mid-text is a line break.
+def test_strip_cr_never_introduces_a_line_break():
+    """A lone `\\r` is deleted, not turned into `\\n`.
 
-    A classic pre-OS-X Mac file uses `\\r` alone to end lines. Deleting
-    it outright would run consecutive lines together into one.
+    Turning it into a newline reads like the kinder choice — a classic
+    pre-OS-X Mac file terminates lines with a bare `\\r` — but these
+    strings render one per output line and some are single-line by
+    contract, so a newline here truncates them at the break. See
+    `test_crlf_yaml_block_scalar_still_renders_inline` for the case that
+    caught it.
     """
     assert _strip_cr("// Greet says hi.\r") == "// Greet says hi."
     assert _strip_cr("first\r\nsecond\r\n") == "first\nsecond\n"
-    assert _strip_cr("first\rsecond") == "first\nsecond"
-    assert _strip_cr("first\rsecond\r") == "first\nsecond"
+    assert _strip_cr("one\rtwo") == "onetwo"
     assert _strip_cr("no returns here") == "no returns here"
+
+
+def test_crlf_yaml_block_scalar_still_renders_inline(tmp_path):
+    """A CRLF YAML file must not lose its block-scalar content.
+
+    The YAML adapter flattens a block scalar's newlines to spaces so the
+    value fits one outline line. With CRLF input the carriage returns
+    survive that flattening, and anything that later turns them into
+    newlines cuts the rendered line short — the value vanished entirely,
+    leaving a bare `config.yaml: |`.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_bytes(
+        b"config.yaml: |\r\n  nested: value\r\n  multiline: yes\r\n"
+    )
+    rendered = render_outline(get_adapter_for(path).parse(path), OutlineOptions())
+
+    line = next(ln for ln in rendered.splitlines() if "config.yaml:" in ln)
+    assert "nested: value" in line
+    assert "multiline: yes" in line

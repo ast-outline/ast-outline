@@ -105,15 +105,18 @@ CALLABLE_KINDS = {KIND_METHOD, KIND_FUNCTION, KIND_CTOR, KIND_DTOR, KIND_OPERATO
 def _strip_cr(text: str) -> str:
     """Drop carriage returns from text lifted out of a CRLF source.
 
-    A trailing lone ``\\r`` is CRLF debris — a comment node ends before
-    the ``\\n``, so the return is left dangling on the end — and comes
-    off. A ``\\r`` in the middle is a line break in its own right (the
-    only one, in a classic pre-OS-X Mac file), so it becomes ``\\n``
-    rather than vanishing and running two lines together.
+    Every remaining ``\\r`` is deleted rather than turned into ``\\n``.
+    That looks lossy for a classic pre-OS-X Mac file, where a lone
+    ``\\r`` is the line terminator — but these strings are rendered one
+    per output line, and some are single-line by contract. The YAML
+    adapter flattens a block scalar's newlines to spaces before this
+    runs, so introducing ``\\n`` here splits a signature that must stay
+    on one line, and everything past the break disappears from the
+    outline. A dead file format is not worth that.
     """
     if "\r" not in text:
         return text
-    return text.replace("\r\n", "\n").rstrip("\r").replace("\r", "\n")
+    return text.replace("\r\n", "\n").replace("\r", "")
 
 
 @dataclass

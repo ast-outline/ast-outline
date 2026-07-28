@@ -38,7 +38,9 @@ For the complete history before v0.6.0, see `git log` and the
   at once. The bytes are untouched: `source` stays byte-equal to the
   file and the `start_byte` / `end_byte` offsets keep indexing it, which
   is what `show` and `--json` promise. This was never Windows-only — a
-  CRLF file checked out anywhere produced the same debris.
+  CRLF file checked out anywhere produced the same debris. One case was
+  worse than cosmetic: a CRLF YAML file lost its block-scalar content
+  entirely, rendering a bare `config.yaml: |` with the value gone.
 
 - **Paths in the output always use forward slashes, Windows included.**
   `outline`, `digest`, `grep`, `show` and the `--json` envelope used to
