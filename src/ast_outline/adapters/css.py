@@ -40,7 +40,7 @@ from typing import Optional
 import tree_sitter_css as tscss
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ._css_base import (
     AT_RULE_STATEMENT_TYPES,
     at_rule_signature,
@@ -75,7 +75,7 @@ class CssAdapter:
     render_family = "css"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         imports: list[str] = []

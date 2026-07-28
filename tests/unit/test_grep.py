@@ -1504,7 +1504,7 @@ def test_cli_count_output(tmp_path: Path) -> None:
     output = _run_cli("grep", "-c", "save", str(tmp_path))
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
     assert len(lines) == 1
-    assert lines[0] == f"{src}:3"
+    assert lines[0] == f"{src.as_posix()}:3"
 
 
 def test_cli_files_only_and_count_are_mutex(tmp_path: Path) -> None:
@@ -1624,7 +1624,7 @@ def test_cli_max_count_with_count_mode_reflects_cap(tmp_path: Path) -> None:
     )
     output = _run_cli("grep", "-c", "-m", "2", "save", str(src))
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
-    assert lines == [f"{src}:2"]
+    assert lines == [f"{src.as_posix()}:2"]
 
 
 def test_cli_max_count_with_files_only_lists_capped_file(tmp_path: Path) -> None:
@@ -1905,7 +1905,7 @@ def test_cli_kind_filter_combines_with_count(tmp_path: Path) -> None:
     # 1 def + 2 calls = 3 total. With --kind def, count should be 1.
     output = _run_cli("grep", "-c", "--kind", "def", "save", str(src))
     lines = [ln for ln in output.splitlines() if ln.strip() and not ln.startswith("#")]
-    assert lines == [f"{src}:1"]
+    assert lines == [f"{src.as_posix()}:1"]
 
 
 def test_cli_kind_filter_excludes_files_with_no_matching_kind(

@@ -21,7 +21,7 @@ from typing import Optional
 from tree_sitter import Language, Node, Parser
 import tree_sitter_python as tspy
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -51,7 +51,7 @@ class PythonAdapter:
     shebang_programs = frozenset({"python", "pypy", "uv"})
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         _walk_module(tree.root_node, src, decls)

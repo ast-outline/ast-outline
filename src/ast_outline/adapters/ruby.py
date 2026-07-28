@@ -198,7 +198,7 @@ from typing import Optional
 from tree_sitter import Language, Node, Parser
 import tree_sitter_ruby as tsrb
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_BLOCK,
     KIND_CLASS,
@@ -286,7 +286,7 @@ class RubyAdapter:
     shebang_programs = frozenset({"ruby"})
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         _walk_top(tree.root_node, src, decls)

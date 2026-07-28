@@ -15,9 +15,8 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 
-from ast_outline.adapters.base import read_source
 from ast_outline.adapters.go import GoAdapter
-from ast_outline.core import display_path
+from ast_outline.core import Declaration, ParseResult, display_path
 from ast_outline.json_output import _rel_path
 
 
@@ -46,13 +45,25 @@ def _all_declarations(decls):
 # --- CRLF -----------------------------------------------------------
 
 
-def test_read_source_normalises_crlf(tmp_path):
+def test_crlf_source_stays_byte_equal_to_the_file(tmp_path):
+    """The cleanup must not touch the bytes.
+
+    `ParseResult.source` is byte-equal to the file and `start_byte` /
+    `end_byte` index into it — that is what `show` and the `--json`
+    offsets promise, and the per-adapter metadata tests assert it. The
+    carriage returns come off the rendered text, not the source.
+    """
     crlf = _write(tmp_path / "crlf.go", "\r\n")
-    assert b"\r" not in read_source(crlf)
+    result = GoAdapter().parse(crlf)
+    assert result.source == crlf.read_bytes()
+
+    decl = next(d for d in _all_declarations(result.declarations) if d.name == "Greet")
+    on_disk = crlf.read_bytes()[decl.start_byte : decl.end_byte]
+    assert on_disk.decode().startswith("func Greet")
 
 
-def test_crlf_source_yields_the_same_outline_as_lf(tmp_path):
-    """The parse result must not remember which newline the file used."""
+def test_crlf_source_yields_the_same_rendered_shape_as_lf(tmp_path):
+    """What we render must not remember which newline the file used."""
     lf = GoAdapter().parse(_write(tmp_path / "lf.go", "\n"))
     crlf = GoAdapter().parse(_write(tmp_path / "crlf.go", "\r\n"))
 
@@ -71,6 +82,38 @@ def test_crlf_docs_carry_no_carriage_return(tmp_path):
     docs = [doc for d in _all_declarations(result.declarations) for doc in d.docs]
     assert docs, "expected the fixture's doc comment to be collected"
     assert not any("\r" in doc for doc in docs)
+
+
+def test_crlf_cleanup_covers_text_assigned_after_construction():
+    """Why the cleanup hangs off `ParseResult` and not `Declaration`.
+
+    Several adapters keep rewriting a declaration after building it —
+    Ruby and Elixir prepend pending docs, C++ and Scala prefix the
+    signature. A hook on `Declaration.__post_init__` would run before
+    those writes and miss them. Assembling the result last is what makes
+    the cleanup total, so that ordering is pinned here directly rather
+    than through whichever adapter happens to exercise it today.
+    """
+    decl = Declaration(kind="function", name="greet", signature="def greet()")
+    child = Declaration(kind="function", name="inner", signature="def inner()")
+    decl.children.append(child)
+    # Written after construction, exactly as the adapters do it.
+    decl.docs = ["# Greets a person.\r"]
+    child.docs = ["# Nested.\r"]
+    decl.signature = "def greet()\r"
+
+    result = ParseResult(
+        path=Path("greeter.rb"),
+        language="ruby",
+        source=b"# Greets a person.\r\n",
+        line_count=1,
+        declarations=[decl],
+    )
+
+    top = result.declarations[0]
+    assert top.docs == ["# Greets a person."]
+    assert top.signature == "def greet()"
+    assert top.children[0].docs == ["# Nested."]
 
 
 # --- path separators ------------------------------------------------

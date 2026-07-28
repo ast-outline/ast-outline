@@ -7,7 +7,7 @@ from typing import Optional
 from tree_sitter import Language, Node, Parser
 import tree_sitter_c_sharp as tscs
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -72,7 +72,7 @@ class CSharpAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         declarations: list[Declaration] = []
         _walk_top(tree.root_node, src, declarations)

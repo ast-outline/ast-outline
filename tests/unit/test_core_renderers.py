@@ -56,9 +56,10 @@ def test_display_path_relativizes_under_cwd():
     cwd = Path.cwd()
     # Under cwd → relative.
     assert display_path(cwd / "src" / "foo.py") == "src/foo.py"
-    # Absolute path outside cwd → unchanged (the A1 fallback).
+    # Absolute path outside cwd → kept whole (the A1 fallback), but
+    # posix-spelled like every other path we print.
     outside = Path("/nonexistent-root-xyz/bar.py")
-    assert display_path(outside) == str(outside)
+    assert display_path(outside) == outside.as_posix()
     # Already-relative input (the --no-ignore walk shape) → unchanged.
     assert display_path(Path("rel/baz.py")) == "rel/baz.py"
 

@@ -44,7 +44,7 @@ from typing import Optional
 import tree_sitter_markdown as tsmd
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_CODE_BLOCK,
     KIND_FRONTMATTER,
@@ -73,7 +73,7 @@ class MarkdownAdapter:
     synthetic_symbol_names = frozenset({"frontmatter"})
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         _walk(tree.root_node, src, decls)

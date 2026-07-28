@@ -27,7 +27,7 @@ from typing import Optional
 import tree_sitter_scss as tssscss
 from tree_sitter import Node, Parser
 
-from .base import count_parse_errors, load_language, read_source
+from .base import count_parse_errors, load_language
 from ._css_base import (
     AT_RULE_STATEMENT_TYPES,
     at_rule_signature,
@@ -78,7 +78,7 @@ class ScssAdapter:
     render_family = "css"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         imports: list[str] = []

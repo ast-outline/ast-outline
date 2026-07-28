@@ -98,7 +98,7 @@ from typing import Optional
 import tree_sitter_html as tshtml
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ._css_base import first_named_child, line_for, text_of
 from ..core import (
     KIND_HTML_ELEMENT,
@@ -222,7 +222,7 @@ class HtmlAdapter:
     render_family = "html"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         imports: list[str] = []

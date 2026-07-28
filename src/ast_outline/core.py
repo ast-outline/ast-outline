@@ -102,6 +102,13 @@ TYPE_KINDS = {KIND_CLASS, KIND_STRUCT, KIND_INTERFACE, KIND_RECORD, KIND_ENUM}
 CALLABLE_KINDS = {KIND_METHOD, KIND_FUNCTION, KIND_CTOR, KIND_DTOR, KIND_OPERATOR, KIND_MIXIN}
 
 
+def _strip_cr(text: str) -> str:
+    """Remove carriage returns from text lifted out of a CRLF source."""
+    if "\r" not in text:
+        return text
+    return text.replace("\r\n", "\n").replace("\r", "")
+
+
 @dataclass
 class Declaration:
     kind: str               # canonical kind (see constants above)
@@ -235,6 +242,41 @@ class ParseResult:
     # Empty list means "rely on line-only heuristics" — backwards-
     # compatible for adapters that haven't been updated.
     import_regions: list[tuple[int, int]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Strip carriage returns from the text the adapters lifted out.
+
+        A file saved with CRLF endings leaves a trailing ``\\r`` on every
+        line an adapter pulls out as text — a Go doc comment arrives as
+        ``// Greet says hi.\\r`` and renders with the debris attached.
+        Not a Windows-only concern: a CRLF file checked out anywhere
+        reads the same.
+
+        This runs here rather than on `Declaration` because adapters
+        keep rewriting `docs` and `signature` after the declaration is
+        constructed (Ruby and Elixir prepend pending docs, C++ and Scala
+        prefix signatures); by the time a `ParseResult` is built the tree
+        has settled. Doing it here also covers every adapter at once,
+        including ones added later.
+
+        The bytes are deliberately left alone. `source` stays byte-equal
+        to the file and `start_byte` / `end_byte` keep indexing it, which
+        is what `show` and the `--json` offsets promise — normalising the
+        source instead would silently shift every offset on a CRLF file.
+        """
+        if b"\r" not in self.source:
+            return
+        _strip_cr_tree(self.declarations)
+        self.imports = [_strip_cr(i) for i in self.imports]
+
+
+def _strip_cr_tree(declarations: list[Declaration]) -> None:
+    for d in declarations:
+        d.signature = _strip_cr(d.signature)
+        d.docs = [_strip_cr(x) for x in d.docs]
+        d.attrs = [_strip_cr(x) for x in d.attrs]
+        d.bases = [_strip_cr(x) for x in d.bases]
+        _strip_cr_tree(d.children)
 
 
 # --- Options --------------------------------------------------------------

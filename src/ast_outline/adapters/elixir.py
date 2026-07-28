@@ -57,7 +57,7 @@ from typing import Optional
 import tree_sitter_elixir as tse
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_BLOCK,
     KIND_CLASS,
@@ -116,7 +116,7 @@ class ElixirAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         _walk_body(tree.root_node.named_children, src, scope="top",

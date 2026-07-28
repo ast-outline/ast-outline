@@ -32,13 +32,13 @@ For the complete history before v0.6.0, see `git log` and the
 - **CRLF source files no longer leave a stray `\r` in the output.** A
   file saved with Windows line endings used to carry a carriage return
   into every line the adapters lift out as text — doc comments most
-  visibly, rendering as `// Greet says hi.\r`. Line endings are now
-  normalised when the file is read, before it is parsed, so the whole
-  pipeline sees one shape. Line numbers are unchanged; for a CRLF file
-  the `start_byte` / `end_byte` values in `--json` now describe the
-  normalised text (which is also what `show` prints) rather than the
-  raw bytes on disk. This was never Windows-only — a CRLF file checked
-  out anywhere produced the same debris.
+  visibly, rendering as `// Greet says hi.\r`. Carriage returns are now
+  stripped from the rendered text (signatures, docs, attributes, bases,
+  imports) once the parse tree has settled, so it covers every language
+  at once. The bytes are untouched: `source` stays byte-equal to the
+  file and the `start_byte` / `end_byte` offsets keep indexing it, which
+  is what `show` and `--json` promise. This was never Windows-only — a
+  CRLF file checked out anywhere produced the same debris.
 
 - **Paths in the output always use forward slashes, Windows included.**
   `outline`, `digest`, `grep`, `show` and the `--json` envelope used to

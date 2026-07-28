@@ -75,7 +75,7 @@ from typing import Optional
 import tree_sitter_scala as tss
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -109,7 +109,7 @@ class ScalaAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         tree = _PARSER.parse(src)
         declarations: list[Declaration] = []
         _walk_top(tree.root_node, src, declarations)

@@ -108,7 +108,7 @@ from typing import Optional
 from tree_sitter import Language, Node, Parser
 import tree_sitter_cpp as tscpp
 
-from .base import count_parse_errors, read_source
+from .base import count_parse_errors
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -252,7 +252,7 @@ class CppAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = read_source(path)
+        src = path.read_bytes()
         # Note: ``import_regions`` is populated below via piggyback on
         # ``_collect_imports``. Includes ``#include`` (already in the
         # imports list) AND ``using_directive`` / ``using_declaration``

@@ -232,7 +232,7 @@ def test_render_show_candidates_path_form():
     # Text note: cwd-relative.
     assert _render_show_candidates(found) == "pkg/mod.py:10-24 (class)"
     # JSON note: absolute, matching the structured `file` field.
-    assert _render_show_candidates(found, absolute=True) == f"{p}:10-24 (class)"
+    assert _render_show_candidates(found, absolute=True) == f"{p.as_posix()}:10-24 (class)"
 
 
 def test_show_not_found_returns_zero_with_note(csharp_dir, capsys):

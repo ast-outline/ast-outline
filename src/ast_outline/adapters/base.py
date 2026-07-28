@@ -127,27 +127,6 @@ def load_language(handle: object) -> Language:
     return Language(capsule)
 
 
-def read_source(path: Path) -> bytes:
-    """Read a source file for parsing, with CRLF line endings normalised.
-
-    Every adapter goes through this instead of `path.read_bytes()`. A
-    file saved with Windows line endings otherwise leaves a stray `\\r`
-    at the end of every line the adapters lift out as text — doc
-    comments most visibly, which then render as `// Greet says hi.\\r`.
-    That is not a Windows-only concern: a CRLF file checked out on any
-    platform produces the same debris.
-
-    Normalising before the parse rather than after keeps everything
-    consistent: tree-sitter sees these bytes, `ParseResult.source` holds
-    these bytes, and every `start_byte` / `end_byte` slice indexes back
-    into them. Line numbers are unaffected — the `\\n` count is the same.
-    The one thing that shifts is how byte offsets relate to the file
-    *on disk* for a CRLF file; they describe the normalised text we
-    report, which is also the text `show` prints.
-    """
-    return path.read_bytes().replace(b"\r\n", b"\n")
-
-
 def count_parse_errors(root: Node) -> int:
     """Count `ERROR` and `MISSING` nodes anywhere in the tree.
 
