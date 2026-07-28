@@ -1,0 +1,83 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest · ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+      - name: CLI smoke test
+        run: |
+          ast-outline help
+          ast-outline outline src/ast_outline/adapters/scss.py
+
+  windows:
+    # Windows runs the CLI, not the suite. Ten tests fail here for
+    # reasons unrelated to any product defect on this platform — path
+    # separators, CRLF fixtures, cp1252 in tests that write files
+    # without an explicit encoding — and they predate this workflow;
+    # Windows simply never had CI. They are tracked as AO-6, and the
+    # full suite joins this leg once they are settled. Until then a
+    # smoke test is what we can keep honestly green, and it is what
+    # would have caught issue #8.
+    name: CLI · windows-latest · py${{ matrix.python }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q tests/unit/test_language_loading.py
+      - name: CLI smoke test
+        run: |
+          ast-outline help
+          ast-outline outline src/ast_outline/adapters/scss.py
+          ast-outline digest src/ast_outline
+
+  tree-sitter-0-26:
+    # Guards issue #8. tree-sitter 0.26.0 reads the deprecated raw-int
+    # language handle back through PyLong_AsUnsignedLong — 32 bits on
+    # Win64 against 64-bit pointers — so importing the SCSS adapter blew
+    # up with an OverflowError before every command, `help` included.
+    # Upstream fixed it after 0.26.0 but has not released, so a fresh
+    # install still picks the broken version up. Pinning it here keeps
+    # our own fix honest.
+    name: tree-sitter 0.26.0 · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install "tree-sitter==0.26.0"
+      - run: python -m pytest -q tests/unit/test_language_loading.py
+      - name: CLI smoke test
+        run: |
+          ast-outline help
+          ast-outline outline src/ast_outline/adapters/scss.py
