@@ -3,7 +3,7 @@ id: L-0003
 addressee: executor
 trigger: [docs-sync, cross-repo, readme-translation, supported-languages-table, language-adapter, digest-marker]
 target: "docs-sync for a user-visible capability change (new language adapter, new digest marker/kind, format change) is declared complete against the file(s) explicitly named by the task/ticket or by AGENTS.md's per-category sync-table row alone — silently skips this repo's translated READMEs (README.ru.md, README.zh-CN.md) and/or docs-site pages not named for that row (docs/index.md, docs/history.md), because AGENTS.md's 'when to also update the docs site' table is scoped per change-category and does not enumerate every known copy for every category, and it never mentions this repo's own translated READMEs at all"
-status: candidate
+status: active
 evidence:
   hits: 4
   situations:
@@ -18,7 +18,8 @@ evidence:
   helped: null
   refuted: 0
 born: 2026-07-11
-last-touched: 2026-07-11
+last-touched: 2026-07-28
+promoted: "2026-07-28 — trust-gate §3: §3.1 повтор на 4 НЕЗАВИСИМЫХ ситуациях (v0.9.0 Lua, v1.8.0 Elixir, батч-дрейф переводов, AO-3) за ~2 месяца; §3.2 подтверждён санкцией владельца — он сам постфактум чинил ровно этот механизм коммитами f963bb7, 35f4beb, a7c9f80 (три отдельных корректирующих прохода, не self-report применителя); §3.3 регресса нет — триггер узкий (user-visible capability-факт), с L-0001 не конфликтует (grep-фрагмент строки vs фиксированный чек-лист копий), различие лекарств зафиксировано в тексте обоих уроков."
 ---
 Правило: при любом изменении user-visible capability-факта этого проекта (новый языковой адаптер, новый digest marker/kind, изменение формата вывода) — прежде чем считать docs-sync завершённым, сверься с ПОЛНЫМ известным списком копий этого факта, а не только с файлами, явно названными в задаче, и не только со строкой таблицы AGENTS.md «when to also update the docs site» для этой категории (она бьёт по категориям и не покрывает все копии для каждой категории). Известные копии в этом проекте:
 - `README.md`, `README.ru.md`, `README.zh-CN.md` (этот репо) — таблица supported-languages/features дрейфует в переводах НЕЗАВИСИМО от английской версии; AGENTS.md вообще не упоминает `README.ru.md`/`README.zh-CN.md` ни в одной строке таблицы;
