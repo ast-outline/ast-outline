@@ -104,6 +104,7 @@ from typing import Optional
 import tree_sitter_sql as tssql
 from tree_sitter import Language, Node, Parser
 
+from .base import read_source
 from ..core import (
     KIND_ENUM,
     KIND_ENUM_MEMBER,
@@ -145,7 +146,7 @@ class SqlAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         imports: list[str] = []

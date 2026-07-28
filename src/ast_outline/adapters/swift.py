@@ -50,7 +50,7 @@ from typing import Optional
 import tree_sitter_swift as tss
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -86,7 +86,7 @@ class SwiftAdapter:
     shebang_programs = frozenset({"swift"})
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         declarations: list[Declaration] = []
         _walk_top(tree.root_node, src, declarations)

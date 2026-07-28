@@ -108,7 +108,7 @@ from typing import Optional
 from tree_sitter import Language, Node, Parser
 import tree_sitter_cpp as tscpp
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -161,7 +161,7 @@ def _strip_ue_body_markers(src: bytes) -> bytes:
     The replacement is byte-precise: each character that was part of
     the macro becomes a space except ``\\n``, which is left intact.
     `show` therefore returns the original source verbatim (the strip
-    is invisible to anything that reads `path.read_bytes()` directly),
+    is invisible to anything that reads the file directly),
     and line/byte numbers in the IR continue to refer to the same
     positions an editor would highlight.
     """
@@ -252,7 +252,7 @@ class CppAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         # Note: ``import_regions`` is populated below via piggyback on
         # ``_collect_imports``. Includes ``#include`` (already in the
         # imports list) AND ``using_directive`` / ``using_declaration``

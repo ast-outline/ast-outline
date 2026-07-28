@@ -86,7 +86,7 @@ from typing import Optional
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_BLOCK,
     KIND_CLASS,
@@ -129,7 +129,7 @@ class TypeScriptAdapter:
     })
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         parser = _PARSER_TSX if path.suffix.lower() in _TSX_EXTS else _PARSER_TS
         tree = parser.parse(src)
         decls: list[Declaration] = []

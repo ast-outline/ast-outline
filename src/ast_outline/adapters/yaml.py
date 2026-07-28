@@ -57,7 +57,7 @@ from typing import Optional
 import tree_sitter_yaml as ts_yaml
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_YAML_DOC,
     KIND_YAML_KEY,
@@ -116,7 +116,7 @@ class YamlAdapter:
         return _format_for_doc(declarations) or ""
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         decls = _walk_stream(tree.root_node, src)
         # Block scalars (``run: |`` shell scripts in CI workflows, Helm

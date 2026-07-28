@@ -414,11 +414,18 @@ def display_path(path: Path) -> str:
     Collapsing to ``src/foo.py`` reclaims that on each line. Paths outside
     cwd (an absolute argument elsewhere on disk, or the ``--no-ignore``
     walk that preserves the caller's input shape) are returned unchanged
-    so they stay resolvable when fed back into ``show`` / ``Read``."""
+    so they stay resolvable when fed back into ``show`` / ``Read``.
+
+    Separators are always forward slashes, Windows included. This output
+    is read by agents that paste paths back into other tools and embed
+    them in JSON and Markdown, where a backslash is an escape character;
+    one spelling also means a repo's outline reads the same whoever
+    generated it. Windows accepts ``/`` wherever it accepts ``\\``, so
+    the path stays usable as a path."""
     cwd = Path.cwd()
     if path.is_relative_to(cwd):
-        return str(path.relative_to(cwd))
-    return str(path)
+        return path.relative_to(cwd).as_posix()
+    return path.as_posix()
 
 
 def render_outline(result: ParseResult, opts: OutlineOptions) -> str:
@@ -1191,9 +1198,9 @@ def render_digest(results: list[ParseResult], opts: DigestOptions, root: Optiona
     body: list[str] = []
     for directory in sorted(grouped.keys(), key=str):
         try:
-            rel = str(directory.relative_to(root))
+            rel = directory.relative_to(root).as_posix()
         except ValueError:
-            rel = str(directory)
+            rel = directory.as_posix()
         # Render each file first; in `compact` mode files with no
         # declarations return an empty block, so a directory composed
         # entirely of such files should not surface a header.
@@ -1252,9 +1259,9 @@ def _render_digest_names(
     body: list[str] = []
     for directory in sorted(grouped.keys(), key=str):
         try:
-            rel = str(directory.relative_to(root))
+            rel = directory.relative_to(root).as_posix()
         except ValueError:
-            rel = str(directory)
+            rel = directory.as_posix()
         dir_lines: list[str] = []
         for r in grouped[directory]:
             file_block = _digest_one_names(r, opts)

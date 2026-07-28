@@ -64,7 +64,7 @@ from typing import Optional
 import tree_sitter_go as tsg
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_CLASS,
     KIND_DELEGATE,
@@ -93,7 +93,7 @@ class GoAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         declarations: list[Declaration] = []
         _walk_top(tree.root_node, src, declarations)

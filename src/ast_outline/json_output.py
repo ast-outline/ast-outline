@@ -83,10 +83,10 @@ def _rel_path(path: Path, root: Path | None) -> str:
     """Path as a string, relative to `root` when possible."""
     if root is not None:
         try:
-            return str(path.relative_to(root))
+            return path.relative_to(root).as_posix()
         except ValueError:
             pass
-    return str(path)
+    return path.as_posix()
 
 
 def _common_root(paths: list[Path]) -> Path | None:

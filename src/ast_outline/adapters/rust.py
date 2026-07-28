@@ -122,7 +122,7 @@ from typing import Optional
 import tree_sitter_rust as tsr
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_DELEGATE,
     KIND_ENUM,
@@ -159,7 +159,7 @@ class RustAdapter:
     single_quote_lifetimes = True
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         declarations: list[Declaration] = []
         _walk_items(tree.root_node, src, declarations)

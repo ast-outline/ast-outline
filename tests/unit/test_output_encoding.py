@@ -65,7 +65,9 @@ def test_emoji_survives_cp1251_console(monkeypatch):
     """End-to-end: the exact crash path — an emoji that cp1251 cannot
     encode — now prints as UTF-8 bytes instead of raising."""
     buf = io.BytesIO()
-    out = io.TextIOWrapper(buf, encoding="cp1251")
+    # newline="" so the wrapper does not translate "\n" to os.linesep —
+    # on Windows that would add a "\r" and hide what this asserts.
+    out = io.TextIOWrapper(buf, encoding="cp1251", newline="")
     monkeypatch.setattr(sys, "stdout", out)
 
     _force_utf8_io()

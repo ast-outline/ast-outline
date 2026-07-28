@@ -1230,7 +1230,7 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
     JSON-is-absolute convention (a JSON consumer gets one resolvable form,
     not a prose path in a different shape than the structured one).
     """
-    render = str if absolute else display_path
+    render = Path.as_posix if absolute else display_path
     return ", ".join(
         f"{render(fpath)}:{m.start_line}-{m.end_line} ({m.kind})"
         for fpath, m in found
@@ -1408,7 +1408,7 @@ def _cmd_show(args) -> int:
     # show the body, instead of the old "path is not a file" dead end.
     if path.is_dir():
         return _show_across(
-            args, [path], directory=str(path), glob_pattern="",
+            args, [path], directory=path.as_posix(), glob_pattern="",
             json_mode=json_mode,
         )
     # Glob target (quoted so the shell didn't expand it) → expand it
@@ -1504,7 +1504,7 @@ def _cmd_show(args) -> int:
                     f"{_render_did_you_mean(suggestions)}?"
                 )
         print(json_output.show_json(
-            str(path), query_results, view=args.view, no_doc=args.no_doc,
+            path.as_posix(), query_results, view=args.view, no_doc=args.no_doc,
             notes=notes,
         ))
         return 0

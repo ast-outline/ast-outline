@@ -75,6 +75,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .base import read_source
 from ..core import (
     KIND_CLASS,
     KIND_CTOR,
@@ -105,7 +106,7 @@ class GDScriptAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         scan = _scan(src)
         decls, imports, import_regions, conditional = _build(scan.logicals, scan.docs)
         return ParseResult(

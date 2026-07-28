@@ -29,6 +29,34 @@ For the complete history before v0.6.0, see `git log` and the
   [py-tree-sitter#469](https://github.com/tree-sitter/py-tree-sitter/issues/469),
   fixed upstream but not yet released.
 
+- **CRLF source files no longer leave a stray `\r` in the output.** A
+  file saved with Windows line endings used to carry a carriage return
+  into every line the adapters lift out as text — doc comments most
+  visibly, rendering as `// Greet says hi.\r`. Line endings are now
+  normalised when the file is read, before it is parsed, so the whole
+  pipeline sees one shape. Line numbers are unchanged; for a CRLF file
+  the `start_byte` / `end_byte` values in `--json` now describe the
+  normalised text (which is also what `show` prints) rather than the
+  raw bytes on disk. This was never Windows-only — a CRLF file checked
+  out anywhere produced the same debris.
+
+- **Paths in the output always use forward slashes, Windows included.**
+  `outline`, `digest`, `grep`, `show` and the `--json` envelope used to
+  emit the native separator, so a Windows run produced `src\foo.py`. The
+  output is read by agents that paste paths into other tools and embed
+  them in JSON and Markdown, where a backslash is an escape character —
+  one JSON test was failing for exactly that reason, a temp path turning
+  into a stray `\u` escape. A repo's outline now also reads identically
+  whoever generated it. Windows accepts `/` wherever it accepts `\`, so
+  the paths stay usable as paths.
+
+### Added
+
+- **CI, which the project did not have at all.** The full suite now runs
+  on Linux, macOS and Windows against Python 3.10 and 3.14, plus a job
+  that pins the broken `tree-sitter` 0.26.0 so issue #8 cannot come back
+  unnoticed.
+
 ## [1.8.2] — 2026-07-11
 
 ### Added

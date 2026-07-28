@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .adapters import collect_files_with_stats, get_adapter_for
+from .adapters.base import read_source
 from .core import Declaration, ParseResult, display_path
 
 
@@ -389,7 +390,7 @@ def grep(
         if adapter is None:
             continue
         try:
-            src = path.read_bytes()
+            src = read_source(path)
         except OSError:
             continue
 

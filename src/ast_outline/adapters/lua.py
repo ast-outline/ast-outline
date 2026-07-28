@@ -62,7 +62,7 @@ from typing import Optional
 import tree_sitter_lua
 from tree_sitter import Language, Node, Parser
 
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from ..core import (
     KIND_FIELD,
     KIND_FUNCTION,
@@ -122,7 +122,7 @@ class LuaAdapter:
     call_sugar_openers = ('"', "'", "{", "[[")
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER.parse(src)
         decls: list[Declaration] = []
         imports: list[str] = []

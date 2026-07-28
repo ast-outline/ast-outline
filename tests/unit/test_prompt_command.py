@@ -175,16 +175,16 @@ def test_appending_snippet_produces_valid_markdown(tmp_path, capsys):
     to an existing markdown file, ensure the result is parseable by eye
     (has required headers, no binary noise)."""
     existing = tmp_path / "AGENTS.md"
-    existing.write_text("# Project instructions\n\nSome prior content.\n")
+    existing.write_text("# Project instructions\n\nSome prior content.\n", encoding="utf-8")
 
     main(["prompt"])
     snippet = capsys.readouterr().out
 
     # User would redirect; we simulate by appending directly.
-    with existing.open("a") as f:
+    with existing.open("a", encoding="utf-8") as f:
         f.write(snippet)
 
-    combined = existing.read_text()
+    combined = existing.read_text(encoding="utf-8")
     assert "# Project instructions" in combined          # prior content preserved
     assert "## Code exploration" in combined              # snippet appended
     # No null bytes / binary corruption

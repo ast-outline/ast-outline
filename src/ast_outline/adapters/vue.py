@@ -41,7 +41,7 @@ import tree_sitter_typescript as tsts
 from tree_sitter import Language, Node, Parser
 
 from ._css_base import first_named_child, text_of
-from .base import count_parse_errors
+from .base import count_parse_errors, read_source
 from .css import walk_top_level as _css_walk_top_level
 from .html import (
     collapse_details_runs as _collapse_details_runs,
@@ -86,7 +86,7 @@ class VueAdapter:
     render_family = "code"
 
     def parse(self, path: Path) -> ParseResult:
-        src = path.read_bytes()
+        src = read_source(path)
         tree = _PARSER_HTML.parse(src)
 
         decls: list[Declaration] = []
