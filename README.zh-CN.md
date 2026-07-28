@@ -7,6 +7,7 @@
 > 无状态、基于 tree-sitter 的 CLI：绘制仓库地图、生成文件大纲、提取符号、
 > 按用法做结构化 grep、追踪导入。让代理运行更省钱、更快，且不会在大型代码库中迷失。
 
+[![tests](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml/badge.svg)](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml)
 [![Code: Apache 2.0](https://img.shields.io/badge/code-Apache%202.0-blue.svg)](./LICENSE)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](./LICENSE-DOCS)
 [![PyPI](https://img.shields.io/pypi/v/ast-outline.svg)](https://pypi.org/project/ast-outline/)
@@ -199,7 +200,8 @@ imports，等等）可在文档站点查看：<https://ast-outline.github.io/>�
 flag 列表与输出格式参考见
 [文档](https://ast-outline.github.io/commands/)。
 
-- **`outline <paths…>`** —— 默认命令。打印签名 + `L<start>-<end>` 行号范围，
+- **`outline <paths…>`** —— 默认命令：凡不是子命令的第一个参数都会运行它，
+  带 flag 也一样（`ast-outline --no-docs x.java` 可用）。打印签名 + `L<start>-<end>` 行号范围，
   不含方法体。加 `--imports` 会在文件头多一行，按语言原生语法列出
   `import` / `use` / `using`。过滤选项：`--no-private`、`--no-fields`、
   `--no-docs`、`--no-attrs`。
@@ -213,14 +215,17 @@ flag 列表与输出格式参考见
 - **`show <file> <Symbol> [Symbol…]`** —— 按名字提取一个或多个方法体。
   代码采用后缀匹配（`Foo.Bar` 匹配 `*.Foo.Bar`）；Markdown 用大小写不
   敏感的标题子串；YAML 用点分键路径；CSS / SCSS 用选择器 token；SQL 用
-  表名或 `table.column`。`--signature` 只返回头部。
+  表名或 `table.column`。`--signature` 只返回头部。第一个参数也可以是
+  **目录或 glob** —— `show src/ User` 会自行定位文件，无需单独搜索。
 
 - **`grep <pattern> <paths…>`** —— AST 感知的结构化搜索。匹配按所属
   class / function 分组，附带 kind 标签 `[def]` / `[import]`（calls 与
   refs 不带标签 —— 符号后是否有 `(` 已经一望而知）。注释和字符串噪声默认
   过滤。POSIX flag `-e`（一次遍历多模式）、`-w`、`-l`、`-c`、`-m`、`-i`
   与 `grep` / `rg` 行为一致。Regex 会自动识别。`--kind def|call|ref|import`
-  按分类筛选。
+  按分类筛选 —— 该划分是语法层面的：`call` 指标识符后紧跟 `(`，`ref` 指
+  其余一切提及（因此方法的使用几乎都归入 `call`）。若要统计全部使用，
+  请去掉 `--kind`，改读 `--json` 中的 `kind_counts`。
 
 - **`prompt`** —— 打印规范的代理上下文片段（`setup-prompt` 内部也用它）。
   手动安装路径：`ast-outline prompt >> AGENTS.md`。

@@ -60,6 +60,8 @@ you already know the symbol:
    trait, enum (whole body, useful when a file holds several types);
    `Player.TakeDamage` when ambiguous. Multiple at once:
    `ast-outline show Player.cs TakeDamage Heal Die`.
+   Don't know the file? Pass a directory or glob instead —
+   `ast-outline show src/ User` locates it, no separate search call.
    For markdown, the symbol is heading text and matching is
    case-insensitive substring — `"installation"` finds
    `"2.1 Installation (macOS / Linux)"`. For yaml, the symbol is a
@@ -92,7 +94,12 @@ you already know the symbol:
    `ast-outline grep User.save -e User.load -e User.delete src/`.
    Narrow by classification with `--kind def|call|ref|import` (also
    accepts `--kind def,call`) — drops the post-filter step when you
-   only want definitions, only call sites, etc.
+   only want definitions, only call sites, etc. The split is syntactic:
+   `call` is an identifier followed by `(`, `ref` is every other
+   mention. So a method's usages are nearly all `call` (`ref` catches
+   method references like `Foo::bar`), while a type's usages are nearly
+   all `ref`, with `call` catching constructor calls. To count every
+   usage, drop `--kind` and read `kind_counts` from `--json`.
    POSIX flags `-w` (whole word), `-l` (paths only), `-c` (counts),
    `-m N` (cap per file) work as in `grep` / `rg`. For non-symbol
    patterns use your default search strategy.

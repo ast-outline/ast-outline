@@ -298,8 +298,28 @@ def digest_json(
 
 
 def grep_json(
-    file_results: list[GrepFileResult], *, notes: list[str] | None = None
+    file_results: list[GrepFileResult],
+    *,
+    notes: list[str] | None = None,
+    files_scanned: int = 0,
+    pattern_counts: dict[str, int] | None = None,
+    pattern_notes: dict[str, str] | None = None,
 ) -> str:
+    """Serialize `grep` output.
+
+    ``files_scanned`` is the denominator of the answer: with
+    ``total_matches: 0`` it separates an honest zero (many files
+    searched, symbol absent) from a query that never reached any code
+    (everything gitignored, no supported extension) — byte-identical
+    results otherwise.
+
+    ``pattern_counts`` attributes hits to the pattern that produced
+    them, so one live ``-e`` cannot hide a dead sibling behind an
+    aggregate total. Emitted as a ``patterns`` array in input order.
+    ``pattern_notes`` carries the per-pattern diagnosis (why this one
+    found nothing) into the same entries — without it a JSON consumer
+    sees the zero but not the repair the text mode prints.
+    """
     root = _common_root([fr.path for fr in file_results])
     files = [grep_file_to_dict(fr, root=root) for fr in file_results]
     kind_counts: dict[str, int] = {}
@@ -307,6 +327,7 @@ def grep_json(
         for m in fr.matches:
             kind_counts[m.kind] = kind_counts.get(m.kind, 0) + 1
     summary = {
+        "files_scanned": files_scanned,
         "total_matches": sum(len(fr.matches) for fr in file_results),
         "files_with_matches": sum(1 for fr in file_results if fr.matches),
         "filtered_count": sum(fr.filtered_count for fr in file_results),
@@ -319,6 +340,18 @@ def grep_json(
         "summary": summary,
         "files": files,
     }
+    # Only when there were several patterns: for a single one the array
+    # would restate ``summary.total_matches`` on every call, and this
+    # payload is read by agents that pay for each token.
+    if pattern_counts and len(pattern_counts) > 1:
+        entries = []
+        for p, n in pattern_counts.items():
+            entry = {"pattern": p, "matches": n}
+            note = (pattern_notes or {}).get(p)
+            if note:
+                entry["notes"] = [note]
+            entries.append(entry)
+        payload["patterns"] = entries
     return _emit(_envelope("grep", payload))
 
 

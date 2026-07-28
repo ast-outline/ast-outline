@@ -279,6 +279,11 @@ class GrepMatch:
     """Outer-to-inner chain of declarations containing this match.
     Empty if the match is at module level (top-level import, top-level
     field, etc.)."""
+    pattern_index: int = 0
+    """Index of the input pattern this match came from. Always 0 for a
+    single-pattern search; with several ``-e`` patterns it is what makes
+    a per-pattern tally possible at all, since they are searched in one
+    combined pass."""
 
 
 @dataclass
@@ -298,6 +303,37 @@ class GrepFileResult:
     would let an agent conclude it found everything when it didn't."""
 
 
+@dataclass
+class GrepOutcome:
+    """Everything one ``grep`` run produced — hits plus the bookkeeping
+    that lets a caller tell an honest zero from a query that never
+    reached any code.
+
+    A bare ``list[GrepFileResult]`` answers "what matched" but not "how
+    much ground did the answer cover" — and an empty list is the same
+    object whether the symbol is absent, every candidate was gitignored,
+    or the directory holds no supported extension. The counters here
+    make those distinguishable; ``files``, ``ignored_dirs`` and
+    ``kind_excluded_counts`` are the historical return triple.
+    """
+
+    files: list[GrepFileResult] = field(default_factory=list)
+    ignored_dirs: int = 0
+    kind_excluded_counts: dict[str, int] = field(default_factory=dict)
+    files_scanned: int = 0
+    """Files actually read and searched — after gitignore, extension
+    and exclude filtering. ``0`` with an empty result means the query
+    never reached any code (bad path filter, all ignored, no supported
+    extension); a positive count with an empty result is a real zero."""
+    pattern_counts: dict[str, int] = field(default_factory=dict)
+    """Visible matches per input pattern, keyed by the pattern as the
+    user typed it. Multiple ``-e`` patterns are searched in one pass, so
+    without this a dead pattern is indistinguishable from a live one —
+    the aggregate total is the only number, and a matching sibling hides
+    the miss. Order follows the input; patterns with zero hits are
+    present with ``0``, which is the whole point."""
+
+
 # --- Search ---------------------------------------------------------------
 
 
@@ -313,7 +349,7 @@ def grep(
     exclude: list[str] | None = None,
     max_count: int | None = None,
     kind_filter: set[str] | None = None,
-) -> tuple[list[GrepFileResult], int, dict[str, int]]:
+) -> GrepOutcome:
     """Find ``patterns`` across ``paths``, return per-file annotated results.
 
     ``patterns`` may be a single string (back-compat) or a list of
@@ -343,8 +379,9 @@ def grep(
     filter contains ``comment``; otherwise the noise filter runs first
     and would zero out that kind before this filter ever sees it.
 
-    Returns a tuple of (file_results, ignored_dirs_count,
-    kind_excluded_counts). When ``include_noise=False`` (the default),
+    Returns a :class:`GrepOutcome` — the hits plus the bookkeeping a
+    caller needs to read an empty result correctly (``files_scanned``,
+    ``pattern_counts``). When ``include_noise=False`` (the default),
     matches inside comments are counted but filtered out of the
     result; matches inside string literals are always returned, tagged
     ``[string]``.
@@ -367,7 +404,11 @@ def grep(
         patterns = [patterns] if patterns else []
     patterns = [p for p in patterns if p]
     if not patterns:
-        return [], 0, {}
+        return GrepOutcome()
+    # Keep the patterns as typed for the per-pattern tally — ``word_match``
+    # below rewrites them into regex, and a caller reading
+    # ``pattern_counts`` wants the key it passed in, not our internal form.
+    original_patterns = list(patterns)
     if word_match:
         # Wrap in word boundaries — for literals, escape first so the
         # pattern itself stays literal; for regex, wrap as a non-
@@ -384,6 +425,8 @@ def grep(
 
     out: list[GrepFileResult] = []
     kind_excluded_counts: dict[str, int] = {}
+    pattern_counts = {p: 0 for p in original_patterns}
+    files_scanned = 0
     for path in collected.files:
         adapter = get_adapter_for(path)
         if adapter is None:
@@ -392,6 +435,11 @@ def grep(
             src = path.read_bytes()
         except OSError:
             continue
+        # Counted here, not over ``collected.files``: a file with no
+        # adapter or one we couldn't read was never searched, and
+        # claiming it as covered ground is exactly the false confidence
+        # this counter exists to prevent.
+        files_scanned += 1
 
         spans = list(matcher(src))
         if not spans:
@@ -416,6 +464,12 @@ def grep(
         )
         for k, n in file_kind_excluded.items():
             kind_excluded_counts[k] = kind_excluded_counts.get(k, 0) + n
+        # Tally before ``max_count`` trims the tail: the question this
+        # answers is "did this pattern find anything at all", and a
+        # pattern whose hits were merely capped is not a dead pattern.
+        # ``truncated_count`` already reports the trimming separately.
+        for m in file_result.matches:
+            pattern_counts[original_patterns[m.pattern_index]] += 1
         if max_count is not None and len(file_result.matches) > max_count:
             file_result.truncated_count = len(file_result.matches) - max_count
             file_result.matches = file_result.matches[:max_count]
@@ -426,7 +480,13 @@ def grep(
         ):
             out.append(file_result)
 
-    return out, collected.ignored_dirs, kind_excluded_counts
+    return GrepOutcome(
+        files=out,
+        ignored_dirs=collected.ignored_dirs,
+        kind_excluded_counts=kind_excluded_counts,
+        files_scanned=files_scanned,
+        pattern_counts=pattern_counts,
+    )
 
 
 # --- did-you-mean (empty-result recovery) ---------------------------------
@@ -528,14 +588,24 @@ def suggest_similar_symbols(
     return out
 
 
+# Prefix for the per-pattern capture groups of a multi-pattern search.
+# Deliberately unlikely to collide with a group name in a user regex —
+# a collision would raise at compile time, turning a valid query into an
+# error.
+_PATTERN_GROUP_PREFIX = "_ao_pat"
+
+
 def _build_matcher(
     patterns: list[str], *, is_regex: bool, case_insensitive: bool
 ):
-    """Return a callable ``src_bytes -> Iterable[(start, end)]`` (byte offsets).
+    """Return a callable ``src_bytes -> Iterable[(start, end, pattern_index)]``.
 
-    Both ends matter: ``end`` lets the classifier peek at the character
-    immediately after the match to distinguish ``foo`` (ref) from
-    ``foo(`` (call).
+    ``start`` / ``end`` are byte offsets. Both ends matter: ``end`` lets
+    the classifier peek at the character immediately after the match to
+    distinguish ``foo`` (ref) from ``foo(`` (call). ``pattern_index``
+    says which input pattern produced the hit — the combined alternation
+    below searches every pattern in one pass, and without the index a
+    dead ``-e`` is invisible behind a live one.
 
     Fast path — single literal, case-sensitive — uses ``bytes.find``
     in a loop. The C implementation (Crochemore-Perrin, ~1-3 GB/s)
@@ -565,13 +635,13 @@ def _build_matcher(
         needle = patterns[0].encode("utf-8")
         needle_len = len(needle)
 
-        def _literal_iter(src: bytes) -> Iterable[tuple[int, int]]:
+        def _literal_iter(src: bytes) -> Iterable[tuple[int, int, int]]:
             idx = 0
             while True:
                 pos = src.find(needle, idx)
                 if pos < 0:
                     return
-                yield pos, pos + needle_len
+                yield pos, pos + needle_len, 0
                 # Advance by 1 (not len(needle)) so overlapping matches
                 # like searching ``aa`` in ``aaa`` both surface.
                 idx = pos + 1
@@ -579,16 +649,33 @@ def _build_matcher(
         return _literal_iter
 
     flags = re.IGNORECASE if case_insensitive else 0
-    if is_regex:
-        # Wrap each pattern in a non-capturing group so an alternation
-        # like ``a|b`` inside one of them doesn't bind the wrong way.
-        combined = "|".join("(?:" + p + ")" for p in patterns)
+    single = len(patterns) == 1
+    if single:
+        # One pattern — attribution is trivial, so don't wrap it in a
+        # group. Keeps the compiled regex byte-identical to what the
+        # user wrote, which matters for backreferences (``(a)\1``):
+        # any group we add would renumber theirs.
+        combined = patterns[0] if is_regex else re.escape(patterns[0])
     else:
-        # Literals — escape each, then alternate.
-        combined = "|".join(re.escape(p) for p in patterns)
+        # Several patterns — each gets a named group so a match can be
+        # traced back to the pattern that produced it. Regex patterns
+        # keep their own grouping intact inside; literals are escaped
+        # first. (Backreferences inside one of several patterns already
+        # bound to the wrong group before this change — alternation
+        # renumbers them regardless.)
+        parts = []
+        for i, p in enumerate(patterns):
+            body = p if is_regex else re.escape(p)
+            parts.append(f"(?P<{_PATTERN_GROUP_PREFIX}{i}>{body})")
+        combined = "|".join(parts)
     rx = re.compile(combined, flags)
+    group_names = (
+        []
+        if single
+        else [f"{_PATTERN_GROUP_PREFIX}{i}" for i in range(len(patterns))]
+    )
 
-    def _regex_iter(src: bytes) -> Iterable[tuple[int, int]]:
+    def _regex_iter(src: bytes) -> Iterable[tuple[int, int, int]]:
         text = src.decode("utf-8", errors="surrogateescape")
         last_cp = 0
         last_byte = 0
@@ -602,7 +689,18 @@ def _build_matcher(
                 text[s_cp:e_cp].encode("utf-8", "surrogateescape")
             )
             last_cp = e_cp
-            yield start_byte, last_byte
+            if single:
+                pat_idx = 0
+            else:
+                # Exactly one of our groups participated in this match;
+                # find it. ``lastgroup`` is not usable here — a group
+                # nested inside the user's own pattern would win it.
+                pat_idx = 0
+                for i, name in enumerate(group_names):
+                    if m.span(name) != (-1, -1):
+                        pat_idx = i
+                        break
+            yield start_byte, last_byte, pat_idx
 
     return _regex_iter
 
@@ -612,7 +710,7 @@ def _build_matcher(
 
 def _annotate_matches(
     result: ParseResult,
-    spans: list[tuple[int, int]],
+    spans: list[tuple[int, int, int]],
     src: bytes,
     *,
     adapter,
@@ -648,7 +746,7 @@ def _annotate_matches(
     file_result = GrepFileResult(path=result.path, language=result.language)
     kind_excluded: dict[str, int] = {}
 
-    for pos, end in spans:
+    for pos, end, pat_idx in spans:
         line_no = _byte_to_line(line_offsets, pos)
         line_start = line_offsets[line_no - 1]
         next_line_start = (
@@ -791,6 +889,7 @@ def _annotate_matches(
                 line_content=line_content,
                 kind=kind,
                 enclosing_path=enclosing,
+                pattern_index=pat_idx,
             )
         )
 

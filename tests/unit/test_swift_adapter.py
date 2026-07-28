@@ -497,7 +497,7 @@ def test_error_count_zero_on_clean_swift(swift_dir):
 
 def test_grep_classifies_swift_import_line(swift_dir):
     """A match on an `import` line is tagged [import], not a plain ref."""
-    results, _, _ = grep("Foundation", [swift_dir / "user_service.swift"])
+    results = grep("Foundation", [swift_dir / "user_service.swift"]).files
     kinds = [m.kind for fr in results for m in fr.matches]
     assert KIND_IMPORT in kinds
 
@@ -506,8 +506,8 @@ def test_grep_filters_swift_line_comments(swift_dir):
     """A match inside a `//`/`///` comment is filtered as noise by default
     and surfaces as a comment match under --include-noise."""
     src = swift_dir / "user_service.swift"
-    visible, _, _ = grep("Concrete", [src])
+    visible = grep("Concrete", [src]).files
     assert visible[0].filtered_count == 1
     assert KIND_COMMENT not in [m.kind for m in visible[0].matches]
-    with_noise, _, _ = grep("Concrete", [src], include_noise=True)
+    with_noise = grep("Concrete", [src], include_noise=True).files
     assert KIND_COMMENT in [m.kind for fr in with_noise for m in fr.matches]

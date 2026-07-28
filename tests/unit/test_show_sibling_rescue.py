@@ -5,8 +5,8 @@ right-class-wrong-file guess: the agent asks for `ThingIdGenerator` in
 `ThingData.cs` while the definition sits in `ThingIdGenerator.cs` next
 to it — and its next move was a generic grep over the parent dir.
 These tests pin the rescue contract: the rescue only ever POINTS —
-``path:start-end (kind)`` candidates, never a body from a file the agent
-didn't ask for; no hit falls back to a did-you-mean pool; the scan
+``path (kind L<start>-<end>)`` candidates, never a body from a file the
+agent didn't ask for; no hit falls back to a did-you-mean pool; the scan
 never leaves the file's own directory.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_single_sibling_hit_points_without_body(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "symbol not found: ThingIdGenerator" in out
     assert "defined in the same directory:" in out
-    assert "ThingIdGenerator.cs:1-3 (class)" in out
+    assert "ThingIdGenerator.cs (class L1-3)" in out
     # Pointer only — never a body from a file the agent didn't ask for.
     assert "public static int Next()" not in out
 
@@ -59,8 +59,8 @@ def test_multiple_sibling_hits_list_candidates_without_bodies(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "symbol not found: TargetMethod" in out
     assert "defined in the same directory:" in out
-    assert "Multi.cs:2-2 (method)" in out
-    assert "Multi.cs:5-5 (method)" in out
+    assert "Multi.cs (method L2-2)" in out
+    assert "Multi.cs (method L5-5)" in out
     # Ambiguous: pointer note only, no code bodies (single-shape contract).
     assert "void TargetMethod" not in out
 
@@ -105,7 +105,7 @@ def test_mixed_hit_and_rescued_symbols_in_one_call(tmp_path, capsys):
     out = capsys.readouterr().out
     # The found symbol prints its body; the missing one only points.
     assert "public class ThingData" in out
-    assert "ThingIdGenerator.cs:1-3 (class)" in out
+    assert "ThingIdGenerator.cs (class L1-3)" in out
     assert "public static int Next()" not in out
 
 
@@ -125,7 +125,8 @@ def test_json_rescue_rides_notes_only(tmp_path, capsys):
     assert payload["results"][0]["matches"] == []
     notes = payload["notes"]
     assert any(
-        "defined in the same directory" in n and "ThingIdGenerator.cs:1-3" in n
+        "defined in the same directory" in n
+        and "ThingIdGenerator.cs (class L1-3)" in n
         for n in notes
     )
 

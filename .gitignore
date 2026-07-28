@@ -41,6 +41,7 @@ BRIEFING.md
 .playwright-mcp/
 *.prev
 LESSONS/
+DECISIONS.md
 
 # Local docs-site screenshots — scratch, not part of the CLI repo
 v[0-9]-*.png

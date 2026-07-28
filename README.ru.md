@@ -9,6 +9,7 @@
 > grep по использованиям, трассировка импортов. Прогоны агента дешевле, быстрее
 > и не тонут в больших кодовых базах.
 
+[![tests](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml/badge.svg)](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml)
 [![Code: Apache 2.0](https://img.shields.io/badge/code-Apache%202.0-blue.svg)](./LICENSE)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](./LICENSE-DOCS)
 [![PyPI](https://img.shields.io/pypi/v/ast-outline.svg)](https://pypi.org/project/ast-outline/)
@@ -208,7 +209,9 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
 языки вперемешку — OK). Полный справочник флагов и формата вывода —
 [в документации](https://ast-outline.github.io/commands/).
 
-- **`outline <paths…>`** — команда по умолчанию. Сигнатуры с диапазонами
+- **`outline <paths…>`** — команда по умолчанию: всё, что не является
+  подкомандой, запускает её, вместе с флагами (`ast-outline --no-docs x.java`
+  работает). Сигнатуры с диапазонами
   `L<start>-<end>`, без тел. Флаг `--imports` добавит в шапку строку с
   `import` / `use` / `using` в нативном синтаксисе языка. Фильтры:
   `--no-private`, `--no-fields`, `--no-docs`, `--no-attrs`.
@@ -225,6 +228,8 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
   для Markdown — регистронезависимая подстрока в заголовке; для YAML —
   точечный путь по ключам; для CSS/SCSS — токен селектора; для SQL —
   имя таблицы или `table.column`. `--signature` вернёт только заголовок.
+  Первым аргументом можно передать **каталог или glob** — `show src/ User`
+  сам найдёт файл, отдельный поиск не нужен.
 
 - **`grep <pattern> <paths…>`** — AST-aware структурный поиск. Матчи
   сгруппированы по enclosing class / function, с тегами `[def]` /
@@ -232,7 +237,11 @@ ast-outline prompt | pbcopy   # буфер обмена в macOS
   делает их очевидными). Шум комментариев и строк фильтруется по
   умолчанию. POSIX-флаги `-e` (многопаттерн за один обход), `-w`, `-l`,
   `-c`, `-m`, `-i` работают как в `grep` / `rg`. Regex автоопределяется.
-  `--kind def|call|ref|import` сужает по классификации.
+  `--kind def|call|ref|import` сужает по классификации — деление
+  синтаксическое: `call` — это идентификатор перед `(`, `ref` — всякое
+  другое упоминание (у метода почти все использования попадут в `call`).
+  Чтобы посчитать все использования, не задавайте `--kind`, а читайте
+  `kind_counts` из `--json`.
 
 - **`prompt`** — печатает каноничный сниппет для агент-контекста (его
   использует и `setup-prompt`). Ручной путь установки:

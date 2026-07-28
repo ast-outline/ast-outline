@@ -400,18 +400,18 @@ def test_malformed_html_outline_shows_warning(html_dir):
 
 
 def test_grep_marks_link_href_as_import(html_dir):
-    file_results, _total, _ = grep(
+    file_results = grep(
         "main.css", [html_dir / "with_assets.html"]
-    )
+    ).files
     assert file_results
     classifications = [m.kind for fr in file_results for m in fr.matches]
     assert any(c == "import" for c in classifications)
 
 
 def test_grep_shows_inline_script_tagged_string(html_dir):
-    file_results, _total, _ = grep(
+    file_results = grep(
         "bootstrap", [html_dir / "with_assets.html"]
-    )
+    ).files
     # The word `bootstrap` only appears inside the inline <script>
     # body — that is code, and it surfaces tagged ``string`` under the
     # strings-visible default.

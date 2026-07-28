@@ -7,6 +7,142 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 For the complete history before v0.6.0, see `git log` and the
 [GitHub release page](https://github.com/ast-outline/ast-outline/releases).
 
+## [1.9.0] — 2026-07-28
+
+Four fixes with one shape: `ast-outline` returned `exit 0` and a
+well-formed answer in situations where the answer was incomplete or
+ambiguous, so a caller acted on it confidently. All four were reported
+from real agent sessions.
+
+### Fixed
+
+- **`show <dir> <ClassName>` never printed a class in Java, C#, C++ or
+  PHP** ([#13](https://github.com/ast-outline/ast-outline/issues/13)).
+  In those languages a constructor carries its type's name, so the class
+  and its own constructor were two declarations of one name, the lookup
+  called that ambiguous, and nothing was printed — for *every* class
+  that declares a constructor, which is the most common thing to ask a
+  Java repo for. The type now wins the collision: the caller who typed a
+  bare type name has already said which one they meant. The constructor
+  stays reachable as `Greeter.Greeter`, the way any nested name is
+  addressed. Genuine ambiguity — two unrelated declarations, or two
+  same-named types in different files — is still reported, but its note
+  now spells out a command that works: candidates render as
+  `path (kind L<start>-<end>)` plus an explicit
+  `(e.g. show <file> <symbol>)`. The old `path:start-end` form read like
+  an argument you could paste back, and `show` doesn't accept it —
+  following the note verbatim answered `path not found` and cost a
+  second call for nothing.
+
+- **`grep -c` / `grep -l` printed advisory lines on stdout**
+  ([#10](https://github.com/ast-outline/ast-outline/issues/10)). Those
+  two modes exist to be piped, so their stdout is a data stream: a
+  `# note:` line there was summed by `awk` as a zero, counted by
+  `wc -l`, and opened by `while read` as a file named
+  `# note: path not found: …` — a broken query surfaced as a plausible
+  result instead of a failure. Notes and hints now go to stderr in `-c`
+  and `-l` only; every other text mode keeps them on stdout, where the
+  note *is* the answer. The exit-0 invariant is untouched — this is a
+  channel change, not a status change.
+
+- **A dead `-e` pattern was silenced by a live one**
+  ([#14](https://github.com/ast-outline/ast-outline/issues/14)). Batching
+  several patterns into one call exists to save round-trips, but the
+  aggregate total was the only number reported, so "this term is absent"
+  and "my regex is wrong" both looked like "found it" as long as a
+  sibling pattern matched. Every pattern with zero hits now gets its own
+  `# hint:` line regardless of what the others found, and `--json`
+  carries a `patterns` array (`[{pattern, matches}…]`, input order).
+  Patterns are also echoed as typed: a search for `\.greet(` used to be
+  reported back as `'\\.greet('`, which is not a string you can paste
+  into a retry.
+
+### Added
+
+- **`files_scanned` — how much ground an empty result covers**
+  ([#11](https://github.com/ast-outline/ast-outline/issues/11)). An
+  honest zero (files were searched, the symbol is absent), a directory
+  where every candidate is gitignored, and a directory holding no file
+  of a supported language produced byte-identical output in both text
+  and `--json` — yet only the first answers the question that was asked.
+  `summary.files_scanned` is now in the JSON payload and the text note
+  reads `# note: no matches for 'X' (412 files scanned)`. A zero scan
+  additionally prints the repair (`--no-ignore`, or check the path).
+
+- **`--kind ref` documents what it actually selects**
+  ([#9](https://github.com/ast-outline/ast-outline/issues/9)). The
+  `call` / `ref` split is purely syntactic — an identifier followed by
+  `(` is a `call`, any other mention is a `ref` — so a method's usages
+  are nearly all `call` and `--kind ref` returned a confident zero for
+  someone sizing a rename. Neither `--help` nor `ast-outline prompt`
+  said so; both now do, along with the READMEs.
+
+- **`show <dir|glob> <Symbol>` is finally in the agent prompt.** The
+  form has existed since v1.3.0 — it locates the file for you, which is
+  the whole point of `show` — but `ast-outline prompt` only ever taught
+  `show <file> <Symbol>`, so an agent learned the two-call habit
+  (search, then read) and reached the directory form by accident or not
+  at all. Two lines, no restructuring.
+
+- **A missing path now tries to repair itself.** `show` has long
+  rescued a missed *symbol* by pointing at the same name in a
+  neighbouring file; a missing **path** got nothing, and the transcripts
+  showed the caller falling back to `find` / `ls` or a blind retry. A
+  path that isn't where it was said to be now produces a pasteable
+  `# hint:` — the same file found elsewhere in the tree, the candidate
+  list when several share the name, the rejoined form when an unquoted
+  path was split on spaces, and the "that's a subcommand, not a path"
+  case. Only verifiable repairs are offered: nothing similar in the
+  tree means no hint at all, since a wrong repair costs more than none.
+
+- **One invocation grammar, and a typo that says so**
+  ([#12](https://github.com/ast-outline/ast-outline/issues/12), first
+  half). `outline` is the implicit subcommand, but that rule stopped
+  holding the moment a flag was attached: `ast-outline --no-docs x.java`
+  errored while `ast-outline x.java` worked, which is a rule an agent
+  learns and then breaks on its first variation. Any first argument that
+  isn't a subcommand now runs `outline`, flags included; `--help` still
+  describes the whole tool. And a mistyped subcommand is diagnosed as
+  one — `ast-outline outlien x.java` used to answer `path not found:
+  outlien`, pointing away from the actual mistake, and now says
+  `unknown subcommand: outlien` / `did you mean 'outline'?`. The typo check
+  is deliberately narrow: it fires only for a bare word — no extension,
+  no path separator — that doesn't exist on disk. `outlines.md` is still
+  outlined, and a *missing* `grep.py` keeps its path-not-found
+  diagnosis and its rescue rather than being told it mistyped a
+  subcommand.
+
+### Changed
+
+- **The `show` body header no longer spells the location as
+  `path:start-end`.** It now reads `path (kind L<start>-<end>)`, the
+  same spelling every other renderer already used. The joined form
+  mimicked the universal `path:LINE` address without being one — no
+  tool accepts a dash-range, this one included — and it taught the
+  habit by example: agents were observed pasting it straight back
+  into a command (`digest file.cs:2-6` → `path not found`) and even
+  concluding that ranges "work in `show` but not in `digest`", which
+  was never true. One line vocabulary across the tool, and no string
+  that looks like an address it isn't. Line numbers themselves are
+  unchanged and still on the header.
+
+- **Argument errors are written to stderr, not stdout.** Nothing ran, so
+  stdout has no answer to carry — and a `# note:` there is read by a
+  piped or truncated caller as "found nothing" rather than "you typed it
+  wrong" (the second half of
+  [#12](https://github.com/ast-outline/ast-outline/issues/12)). Applies
+  to argument-parsing failures only: a genuinely empty result keeps its
+  note on stdout, where the note *is* the answer. **The exit code is
+  unchanged at 0** — which stream carries a diagnosis and what status
+  the process returns are separate questions, and the exit-0 invariant
+  stays as documented. `--json` continues to emit its `error` document
+  on stdout, since there the document is the answer.
+
+- `grep()` returns a `GrepOutcome` dataclass instead of a three-tuple.
+  Two of the fixes above each needed a new field, and a five-tuple reads
+  worse than it counts. Affects direct library callers only; the CLI
+  surface is unchanged.
+
 ## [1.8.3] — 2026-07-28
 
 ### Fixed

@@ -52,7 +52,7 @@ def test_grep_finds_definition_and_call(tmp_path: Path) -> None:
         "def caller():\n"
         "    save()\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     assert len(results) == 1
     kinds = _kinds(results)
     assert KIND_DEF in kinds
@@ -70,7 +70,7 @@ def test_grep_distinguishes_call_from_ref(tmp_path: Path) -> None:
         "def save():\n"              # def
         "    pass\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     kinds = _kinds(results)
     assert KIND_REF in kinds
     assert KIND_CALL in kinds
@@ -94,7 +94,7 @@ def test_grep_shows_string_literals_by_default(tmp_path: Path) -> None:
         'def save():\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     assert len(results) == 1
     fr = results[0]
     assert fr.filtered_count == 0
@@ -124,11 +124,11 @@ def test_grep_finds_translation_keys_in_string_literals(tmp_path: Path) -> None:
     )
     # Values inside string literals — the previously-hidden class.
     for pattern in ("День", "Раздув углей", "Embertide event"):
-        results, _, _ = grep(pattern, [src])
+        results = grep(pattern, [src]).files
         assert results, f"pattern {pattern!r} must match"
         assert any(m.kind == KIND_STRING for m in results[0].matches), pattern
     # The identifier-like key still matches as code, not as string.
-    results, _, _ = grep("embertide", [src])
+    results = grep("embertide", [src]).files
     assert results and results[0].matches
 
 
@@ -144,7 +144,7 @@ def test_grep_filters_comments_by_default(tmp_path: Path) -> None:
         "def save():\n"
         "    pass\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     fr = results[0]
     # 2 comments filtered (one whole-line, one trailing).
     assert fr.filtered_count == 2
@@ -161,7 +161,7 @@ def test_grep_include_noise_surfaces_filtered(tmp_path: Path) -> None:
         '    label = "save"\n'
         '    save()\n'
     )
-    results, _, _ = grep("save", [src], include_noise=True)
+    results = grep("save", [src], include_noise=True).files
     fr = results[0]
     assert fr.filtered_count == 0
     kinds = _kinds(results)
@@ -180,7 +180,7 @@ def test_grep_classifies_import_lines(tmp_path: Path) -> None:
         "def use():\n"
         "    User()\n"
     )
-    results, _, _ = grep("User", [src])
+    results = grep("User", [src]).files
     kinds = _kinds(results)
     assert kinds.count(KIND_IMPORT) == 2
     assert KIND_CALL in kinds
@@ -197,7 +197,7 @@ def test_grep_discovers_class_method_scope(tmp_path: Path) -> None:
         "    def update(self, u):\n"
         "        u.save()\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     scopes = _scopes(results)
     assert scopes == [["UserHandler", "update"]]
 
@@ -210,7 +210,7 @@ def test_grep_top_level_match_has_empty_scope(tmp_path: Path) -> None:
         "\n"
         "MAX = 10\n"
     )
-    results, _, _ = grep("User", [src])
+    results = grep("User", [src]).files
     scopes = _scopes(results)
     assert scopes == [[]]
 
@@ -227,7 +227,7 @@ def test_grep_callback_block_in_scope_chain(tmp_path: Path) -> None:
         "  })\n"
         "})\n"
     )
-    results, _, _ = grep("doSomething", [src])
+    results = grep("doSomething", [src]).files
     scopes = _scopes(results)
     assert scopes == [["outer suite", "does the thing"]]
 
@@ -244,7 +244,7 @@ def test_grep_block_label_is_a_definition(tmp_path: Path) -> None:
         "  })\n"
         "})\n"
     )
-    results, _, _ = grep("login flow", [src])
+    results = grep("login flow", [src]).files
     assert _kinds(results) == [KIND_DEF]
 
 
@@ -262,7 +262,7 @@ def test_grep_ruby_callback_block_in_scope_chain(tmp_path: Path) -> None:
         '  end\n'
         'end\n'
     )
-    results, _, _ = grep("doSomething", [src])
+    results = grep("doSomething", [src]).files
     scopes = _scopes(results)
     assert scopes == [["#full_name", "joins the parts"]]
 
@@ -278,7 +278,7 @@ def test_grep_ruby_block_label_is_a_definition(tmp_path: Path) -> None:
         '  end\n'
         'end\n'
     )
-    results, _, _ = grep("login flow", [src])
+    results = grep("login flow", [src]).files
     assert _kinds(results) == [KIND_DEF]
 
 
@@ -295,7 +295,7 @@ def test_grep_does_not_call_typeref_a_def(tmp_path: Path) -> None:
         "def run(h: Handler) -> None:\n"
         "    pass\n"
     )
-    results, _, _ = grep("Handler", [src])
+    results = grep("Handler", [src]).files
     kinds = _kinds(results)
     # One [def] for the class itself, one [ref] for the type annotation.
     assert kinds.count(KIND_DEF) == 1
@@ -315,7 +315,7 @@ def test_grep_substring_inside_name_still_def(tmp_path: Path) -> None:
     # Use exact pattern to constrain. Both contain `save` substring; here
     # we test that the match column inside `save_user` is recognized as
     # the DEF of `save_user` (since it falls in its name token).
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     kinds = _kinds(results)
     # Both definitions named with `save` in their identifier — both [def].
     assert kinds.count(KIND_DEF) == 2
@@ -344,7 +344,7 @@ def test_grep_decorated_class_is_def(tmp_path: Path) -> None:
         "class ModelEntry:\n"          # L4 — the name line
         "    name: str\n"
     )
-    results, _, _ = grep("ModelEntry", [src], kind_filter={KIND_DEF})
+    results = grep("ModelEntry", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(results) == [4]
 
 
@@ -357,7 +357,7 @@ def test_grep_decorated_function_is_def(tmp_path: Path) -> None:
         "def llamacpp_start(port):\n"  # L3 — the name line
         "    pass\n"
     )
-    results, _, _ = grep("llamacpp_start", [src], kind_filter={KIND_DEF})
+    results = grep("llamacpp_start", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(results) == [3]
 
 
@@ -377,7 +377,7 @@ def test_grep_decorator_name_collision_not_a_def(tmp_path: Path) -> None:
         "def bar(self):\n"             # L5 — the real decorated def
         "    pass\n"
     )
-    results, _, _ = grep("bar", [src], kind_filter={KIND_DEF})
+    results = grep("bar", [src], kind_filter={KIND_DEF}).files
     # Two defs: the helper (L1) and the decorated method (L5). NOT L4.
     assert sorted(_def_lines(results)) == [1, 5]
 
@@ -391,9 +391,9 @@ def test_grep_attributed_csharp_class_is_def(tmp_path: Path) -> None:
         "    public void Go() {}\n"     # L4 — the name line
         "}\n"
     )
-    cls, _, _ = grep("Widget", [src], kind_filter={KIND_DEF})
+    cls = grep("Widget", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    meth, _, _ = grep("Go", [src], kind_filter={KIND_DEF})
+    meth = grep("Go", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(meth) == [4]
 
 
@@ -406,9 +406,9 @@ def test_grep_annotated_java_class_is_def(tmp_path: Path) -> None:
         "    public String go() { return \"\"; }\n"  # L4
         "}\n"
     )
-    cls, _, _ = grep("Anno", [src], kind_filter={KIND_DEF})
+    cls = grep("Anno", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    meth, _, _ = grep("go", [src], kind_filter={KIND_DEF})
+    meth = grep("go", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(meth) == [4]
 
 
@@ -420,7 +420,7 @@ def test_grep_decorated_ts_class_is_def(tmp_path: Path) -> None:
         "    name: string;\n"
         "}\n"
     )
-    results, _, _ = grep("DecoratedTs", [src], kind_filter={KIND_DEF})
+    results = grep("DecoratedTs", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(results) == [2]
 
 
@@ -433,9 +433,9 @@ def test_grep_annotated_kotlin_class_and_fun_are_def(tmp_path: Path) -> None:
         "@Deprecated(\"no\")\n"
         "fun ktFn(): Int = 1\n"          # L5
     )
-    cls, _, _ = grep("KtAnno", [src], kind_filter={KIND_DEF})
+    cls = grep("KtAnno", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    fn, _, _ = grep("ktFn", [src], kind_filter={KIND_DEF})
+    fn = grep("ktFn", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(fn) == [5]
 
 
@@ -449,9 +449,9 @@ def test_grep_attributed_php_class_and_method_are_def(tmp_path: Path) -> None:
         "    public function go(): void {}\n"  # L5
         "}\n"
     )
-    cls, _, _ = grep("PhpAttr", [src], kind_filter={KIND_DEF})
+    cls = grep("PhpAttr", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [3]
-    meth, _, _ = grep("go", [src], kind_filter={KIND_DEF})
+    meth = grep("go", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(meth) == [5]
 
 
@@ -464,9 +464,9 @@ def test_grep_attributed_swift_class_and_func_are_def(tmp_path: Path) -> None:
         "    func doThing() {}\n"        # L4
         "}\n"
     )
-    cls, _, _ = grep("SwiftAttr", [src], kind_filter={KIND_DEF})
+    cls = grep("SwiftAttr", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    fn, _, _ = grep("doThing", [src], kind_filter={KIND_DEF})
+    fn = grep("doThing", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(fn) == [4]
 
 
@@ -479,9 +479,9 @@ def test_grep_annotated_scala_class_and_def_are_def(tmp_path: Path) -> None:
         "  def scalaFn(): Int = 1\n"     # L4
         "}\n"
     )
-    cls, _, _ = grep("ScalaAnno", [src], kind_filter={KIND_DEF})
+    cls = grep("ScalaAnno", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    fn, _, _ = grep("scalaFn", [src], kind_filter={KIND_DEF})
+    fn = grep("scalaFn", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(fn) == [4]
 
 
@@ -501,9 +501,9 @@ def test_grep_attributed_cpp_function_is_def(tmp_path: Path) -> None:
         "    int x;\n"
         "};\n"
     )
-    fn, _, _ = grep("cppFn", [src], kind_filter={KIND_DEF})
+    fn = grep("cppFn", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(fn) == [2]
-    st, _, _ = grep("CppStruct", [src], kind_filter={KIND_DEF})
+    st = grep("CppStruct", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(st) == [4]
 
 
@@ -526,11 +526,11 @@ def test_grep_annotated_gdscript_defs_are_def(tmp_path: Path) -> None:
         "func do_rpc():\n"              # L9
         "\tpass\n"
     )
-    cls, _, _ = grep("MyTool", [src], kind_filter={KIND_DEF})
+    cls = grep("MyTool", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(cls) == [2]
-    var, _, _ = grep("speed", [src], kind_filter={KIND_DEF})
+    var = grep("speed", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(var) == [6]
-    fn, _, _ = grep("do_rpc", [src], kind_filter={KIND_DEF})
+    fn = grep("do_rpc", [src], kind_filter={KIND_DEF}).files
     assert _def_lines(fn) == [9]
 
 
@@ -546,7 +546,7 @@ def test_grep_regex_mode(tmp_path: Path) -> None:
         "def save_admin():\n"
         "    pass\n"
     )
-    results, _, _ = grep(r"save_\w+", [src], is_regex=True)
+    results = grep(r"save_\w+", [src], is_regex=True).files
     assert len(results) == 1
     assert len(results[0].matches) == 2
     assert all(m.kind == KIND_DEF for m in results[0].matches)
@@ -559,7 +559,7 @@ def test_grep_case_insensitive_literal(tmp_path: Path) -> None:
         "user = 2\n"
         "User = 3\n"
     )
-    results, _, _ = grep("user", [src], case_insensitive=True)
+    results = grep("user", [src], case_insensitive=True).files
     assert len(results[0].matches) == 3
 
 
@@ -574,7 +574,7 @@ def test_render_grep_shows_imports_section(tmp_path: Path) -> None:
         "def use():\n"
         "    User()\n"
     )
-    results, _, _ = grep("User", [src])
+    results = grep("User", [src]).files
     output = render_grep(results)
     assert "## imports" in output
     assert "## matches" in output
@@ -597,7 +597,7 @@ def test_render_grep_omits_imports_section_when_empty(tmp_path: Path) -> None:
         "def save():\n"
         "    pass\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     output = render_grep(results)
     assert "## imports" not in output
     assert "## matches" in output
@@ -610,7 +610,7 @@ def test_render_grep_includes_match_count_in_header(tmp_path: Path) -> None:
         "    save()\n"
         "    save()\n"
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     output = render_grep(results)
     assert "(3 matches)" in output
 
@@ -628,7 +628,7 @@ def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> Non
         'def save():\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [with_visible])
+    results = grep("save", [with_visible]).files
     out = render_grep(results)
     assert "in comments hidden" not in out
     assert results[0].filtered_count == 1   # still tracked for JSON
@@ -639,7 +639,7 @@ def test_render_grep_filtered_footer_only_when_no_visible(tmp_path: Path) -> Non
         'def other():\n'
         '    pass  # save mentioned only here\n'
     )
-    results2, _, _ = grep("save", [comment_only])
+    results2 = grep("save", [comment_only]).files
     out2 = render_grep(results2)
     assert "1 match in comments hidden" in out2
     assert "--include-noise" in out2
@@ -656,7 +656,7 @@ def test_render_grep_arrow_marker_on_match_lines(tmp_path: Path) -> None:
         "def target():\n"
         "    pass\n"
     )
-    results, _, _ = grep("target", [src])
+    results = grep("target", [src]).files
     output = render_grep(results)
     assert "> L3: target()" in output
 
@@ -673,7 +673,7 @@ def test_grep_typescript_call_classification(tmp_path: Path) -> None:
         "  u.save();\n"
         "}\n"
     )
-    results, _, _ = grep("User", [src])
+    results = grep("User", [src]).files
     kinds = _kinds(results)
     assert KIND_IMPORT in kinds
     assert KIND_REF in kinds
@@ -694,7 +694,7 @@ def test_grep_generic_call_classified_as_call(tmp_path: Path) -> None:
         "  return genericCall<string>();\n"
         "}\n"
     )
-    results, _, _ = grep("genericCall", [src])
+    results = grep("genericCall", [src]).files
     kinds = _kinds(results)
     # Definition + call — both should be present, not two refs.
     assert kinds.count(KIND_DEF) == 1
@@ -709,7 +709,7 @@ def test_grep_optional_chain_call_classified_as_call(tmp_path: Path) -> None:
         "  fn?.();\n"                  # optional chain call — should be [call]
         "}\n"
     )
-    results, _, _ = grep("fn", [src])
+    results = grep("fn", [src]).files
     kinds = _kinds(results)
     assert KIND_CALL in kinds
 
@@ -722,7 +722,7 @@ def test_grep_non_null_assertion_call(tmp_path: Path) -> None:
         "  fn!();\n"                   # non-null assertion call — [call]
         "}\n"
     )
-    results, _, _ = grep("fn", [src])
+    results = grep("fn", [src]).files
     kinds = _kinds(results)
     assert KIND_CALL in kinds
 
@@ -733,7 +733,7 @@ def test_grep_indexed_array_is_ref_not_call(tmp_path: Path) -> None:
     src.write_text(
         "const fns = [genericCall];\n"     # plain ref inside array literal
     )
-    results, _, _ = grep("genericCall", [src])
+    results = grep("genericCall", [src]).files
     kinds = _kinds(results)
     assert KIND_REF in kinds
     assert KIND_CALL not in kinds
@@ -849,7 +849,7 @@ def test_grep_alternation_short_first_classifies_call_python(
         "def caller():\n"
         "    obj.fooBar(x, y)\n"
     )
-    results, _, _ = grep("foo|fooBar", [src], is_regex=True)
+    results = grep("foo|fooBar", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"short-first alternation hitting a call must classify as call, got {kinds}"
@@ -868,7 +868,7 @@ def test_grep_alternation_short_first_classifies_call_typescript(
         "    obj.fooBar(x, y);\n"
         "}\n"
     )
-    results, _, _ = grep("foo|fooBar", [src], is_regex=True)
+    results = grep("foo|fooBar", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, kinds
 
@@ -885,7 +885,7 @@ def test_grep_alternation_short_first_classifies_call_go(
         "    obj.FooBar(x, y)\n"
         "}\n"
     )
-    results, _, _ = grep("Foo|FooBar", [src], is_regex=True)
+    results = grep("Foo|FooBar", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, kinds
 
@@ -901,7 +901,7 @@ def test_grep_alternation_short_first_classifies_call_rust(
         "    obj.do_stuff_now(x, y);\n"
         "}\n"
     )
-    results, _, _ = grep("do_stuff|do_stuff_now", [src], is_regex=True)
+    results = grep("do_stuff|do_stuff_now", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, kinds
 
@@ -920,9 +920,9 @@ def test_grep_alternation_short_first_classifies_call_csharp(
         "    }\n"
         "}\n"
     )
-    results, _, _ = grep(
+    results = grep(
         "TryAssembleFragments|TryAssembleFragmentsNear", [src], is_regex=True
-    )
+    ).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, kinds
 
@@ -942,7 +942,7 @@ def test_grep_literal_substring_of_called_identifier_classifies_call(
         "def caller():\n"
         "    obj.fooBar(x, y)\n"
     )
-    results, _, _ = grep("foo", [src])  # literal, no is_regex=True
+    results = grep("foo", [src]).files  # literal, no is_regex=True
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"literal substring inside called identifier must classify as call, got {kinds}"
@@ -963,7 +963,7 @@ def test_grep_alternation_short_first_non_call_still_ref(
         "    x = fooBar + 2\n"         # ref in expression
         "    y = fooBar.method()\n"    # member-access ref, .method() is the call
     )
-    results, _, _ = grep("foo|fooBar", [src], is_regex=True)
+    results = grep("foo|fooBar", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     # The three matches above are all ref (no direct ``fooBar(`` shape).
     assert KIND_CALL not in kinds, (
@@ -989,7 +989,7 @@ def test_grep_generic_call_regex_match_ends_on_closer(tmp_path: Path) -> None:
         "    }\n"
         "}\n"
     )
-    results, _, _ = grep("Bind.*SaveSystem", [src], is_regex=True)
+    results = grep("Bind.*SaveSystem", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"regex match ending on `>` must classify as call, got {kinds}"
@@ -1008,7 +1008,7 @@ def test_grep_generic_call_literal_full_invocation(tmp_path: Path) -> None:
         "    }\n"
         "}\n"
     )
-    results, _, _ = grep("Bind<SaveSystem>", [src])
+    results = grep("Bind<SaveSystem>", [src]).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, kinds
 
@@ -1029,7 +1029,7 @@ def test_grep_nested_generic_call(tmp_path: Path) -> None:
     # last char of ``number``, leaving the cursor on the inner ``>``
     # (the type-arg list closes with ``>>`` here, but the match ends
     # before either of them — the walker chains both closer-skips).
-    results, _, _ = grep(r"genericCall.*number", [src], is_regex=True)
+    results = grep(r"genericCall.*number", [src], is_regex=True).files
     # Match ends at end of ``number``, cursor on ``>``. Closer-skip
     # hops over both ``>`` chars, then finds ``(``.
     kinds = [m.kind for m in results[0].matches]
@@ -1059,7 +1059,7 @@ def test_grep_python_docstring_matches_tagged_string(tmp_path: Path) -> None:
         'def save():\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     fr = results[0]
     assert fr.filtered_count == 0
     visible_kinds = [m.kind for m in fr.matches]
@@ -1079,7 +1079,7 @@ def test_grep_module_docstring_surfaces_tagged_string(tmp_path: Path) -> None:
         'def use():\n'
         '    User()\n'
     )
-    results, _, _ = grep("User", [src])
+    results = grep("User", [src]).files
     fr = results[0]
     assert fr.filtered_count == 0
     visible_kinds = [m.kind for m in fr.matches]
@@ -1107,7 +1107,7 @@ def test_grep_triple_quote_in_code_doesnt_break_filtering(tmp_path: Path) -> Non
         'def save():\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [src])
+    results = grep("save", [src]).files
     fr = results[0]
     # The docstring hit is visible and exactly tagged ``string`` — the
     # region boundaries (not the visibility) are what this test pins.
@@ -1126,7 +1126,7 @@ def test_grep_include_noise_surfaces_docstring_matches(tmp_path: Path) -> None:
         '    """Calls save() here."""\n'
         '    pass\n'
     )
-    results, _, _ = grep("save", [src], include_noise=True)
+    results = grep("save", [src], include_noise=True).files
     fr = results[0]
     assert fr.filtered_count == 0
     kinds = [m.kind for m in fr.matches]
@@ -1143,13 +1143,13 @@ def test_grep_respects_gitignore(tmp_path: Path) -> None:
     (tmp_path / "kept.py").write_text("def save(): pass\n")
     (tmp_path / "ignored.py").write_text("def save(): pass\n")
 
-    results, _, _ = grep("save", [tmp_path])
+    results = grep("save", [tmp_path]).files
     paths = [str(fr.path) for fr in results]
     assert any("kept.py" in p for p in paths)
     assert not any("ignored.py" in p for p in paths)
 
     # --no-ignore disables filtering.
-    results_all, _, _ = grep("save", [tmp_path], no_ignore=True)
+    results_all = grep("save", [tmp_path], no_ignore=True).files
     paths_all = [str(fr.path) for fr in results_all]
     assert any("ignored.py" in p for p in paths_all)
 
@@ -1161,21 +1161,21 @@ def test_grep_unsupported_extension_skipped(tmp_path: Path) -> None:
     """Files whose extension no adapter claims are skipped silently."""
     (tmp_path / "data.bin").write_text("save save save\n")
     (tmp_path / "code.py").write_text("def save(): pass\n")
-    results, _, _ = grep("save", [tmp_path])
+    results = grep("save", [tmp_path]).files
     paths = [str(fr.path) for fr in results]
     assert all("code.py" in p for p in paths)
 
 
 def test_grep_nonexistent_path_returns_empty(tmp_path: Path) -> None:
     """A missing path is silently skipped (CLI surfaces it via --path-not-found)."""
-    results, _, _ = grep("anything", [tmp_path / "does-not-exist"])
+    results = grep("anything", [tmp_path / "does-not-exist"]).files
     assert results == []
 
 
 def test_grep_no_matches_returns_empty(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("def foo(): pass\n")
-    results, _, _ = grep("nonexistent_symbol", [src])
+    results = grep("nonexistent_symbol", [src]).files
     assert results == []
 
 
@@ -1184,7 +1184,7 @@ def test_grep_empty_pattern_returns_empty(tmp_path: Path) -> None:
     explicitly rejected so callers never get the file-flooded surprise."""
     src = tmp_path / "mod.py"
     src.write_text("def foo(): pass\n")
-    results, _, _ = grep("", [src])
+    results = grep("", [src]).files
     assert results == []
 
 
@@ -1199,7 +1199,7 @@ def test_grep_accepts_list_of_patterns(tmp_path: Path) -> None:
         "def load(): pass\n"
         "def update(): pass\n"
     )
-    results, _, _ = grep(["save", "load"], [src])
+    results = grep(["save", "load"], [src]).files
     fr = results[0]
     # Three lines of code; "save" matches one def, "load" matches one def,
     # and "update" is not in the pattern list — should NOT match.
@@ -1223,7 +1223,7 @@ def test_grep_multi_pattern_preserves_classification(tmp_path: Path) -> None:
         "    load()\n"     # call to load
         "    other = save\n"  # ref to save
     )
-    results, _, _ = grep(["save", "load"], [src])
+    results = grep(["save", "load"], [src]).files
     kinds = _kinds(results)
     assert kinds.count(KIND_DEF) == 2
     assert kinds.count(KIND_CALL) == 2
@@ -1235,8 +1235,8 @@ def test_grep_multi_pattern_string_back_compat(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("def save(): pass\n")
     # Both call shapes return the same result.
-    results_str, _, _ = grep("save", [src])
-    results_list, _, _ = grep(["save"], [src])
+    results_str = grep("save", [src]).files
+    results_list = grep(["save"], [src]).files
     assert len(results_str) == len(results_list) == 1
     assert results_str[0].matches[0].kind == results_list[0].matches[0].kind
 
@@ -1245,7 +1245,7 @@ def test_grep_multi_pattern_filters_empty_strings(tmp_path: Path) -> None:
     """Empty pattern strings are silently dropped; non-empty ones still run."""
     src = tmp_path / "mod.py"
     src.write_text("def save(): pass\n")
-    results, _, _ = grep(["", "save", ""], [src])
+    results = grep(["", "save", ""], [src]).files
     assert len(results[0].matches) == 1
 
 
@@ -1253,7 +1253,7 @@ def test_grep_multi_pattern_all_empty_returns_empty(tmp_path: Path) -> None:
     """If every pattern is empty/dropped, the call returns no results."""
     src = tmp_path / "mod.py"
     src.write_text("def save(): pass\n")
-    results, _, _ = grep(["", "", ""], [src])
+    results = grep(["", "", ""], [src]).files
     assert results == []
 
 
@@ -1265,7 +1265,7 @@ def test_grep_multi_pattern_with_regex(tmp_path: Path) -> None:
         "def load_admin(): pass\n"
         "def other(): pass\n"
     )
-    results, _, _ = grep([r"save_\w+", r"load_\w+"], [src], is_regex=True)
+    results = grep([r"save_\w+", r"load_\w+"], [src], is_regex=True).files
     fr = results[0]
     assert len(fr.matches) == 2
 
@@ -1277,7 +1277,7 @@ def test_grep_multi_pattern_with_case_insensitive(tmp_path: Path) -> None:
         "Admin = 2\n"
         "guest = 3\n"
     )
-    results, _, _ = grep(["user", "admin"], [src], case_insensitive=True)
+    results = grep(["user", "admin"], [src], case_insensitive=True).files
     assert len(results[0].matches) == 2
 
 
@@ -1407,7 +1407,7 @@ def test_grep_word_match_filters_substring_noise(tmp_path: Path) -> None:
         "    save()\n"
         "    save_user()\n"
     )
-    results, _, _ = grep("save", [src], word_match=True)
+    results = grep("save", [src], word_match=True).files
     fr = results[0]
     # 1 def of `save` + 1 call of `save()` — only whole-word matches.
     # `save_user`, `unsave`, `saved` are all substrings, not whole words.
@@ -1427,7 +1427,7 @@ def test_grep_word_match_with_regex(tmp_path: Path) -> None:
         "    save_user()\n"
         "    notsave_user()\n"          # has `save_user` substring; -w should reject
     )
-    results, _, _ = grep(r"save_\w+", [src], is_regex=True, word_match=True)
+    results = grep(r"save_\w+", [src], is_regex=True, word_match=True).files
     fr = results[0]
     # 2 defs + 1 call (the `notsave_user` is a substring within a longer
     # identifier, so word-boundary fails).
@@ -1444,7 +1444,7 @@ def test_grep_word_match_escapes_literal_metachars(tmp_path: Path) -> None:
         '    User.save()\n'              # whole literal match
         '    UserXsave()\n'              # would match if `.` were regex
     )
-    results, _, _ = grep("User.save", [src], word_match=True)
+    results = grep("User.save", [src], word_match=True).files
     fr = results[0]
     visible = [m for m in fr.matches if m.kind != KIND_STRING]
     # The `User.save()` call matches; `UserXsave` does NOT (because
@@ -1512,12 +1512,20 @@ def test_cli_count_output(tmp_path: Path) -> None:
 
 def test_cli_files_only_and_count_are_mutex(tmp_path: Path) -> None:
     """``-l`` and ``-c`` together are an argparse error — surfaced
-    on stdout as ``# note:`` per CLI contract."""
+    on stderr as ``# note:`` (nothing ran, so stdout stays empty)."""
+    import contextlib
+    import io
+
+    from ast_outline.cli import main
+
     src = tmp_path / "mod.py"
     src.write_text("def save(): pass\n")
-    output = _run_cli("grep", "-l", "-c", "save", str(tmp_path))
-    assert "# note:" in output
-    assert "not allowed" in output
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        main(["grep", "-l", "-c", "save", str(tmp_path)])
+    assert out.getvalue() == ""
+    assert "# note:" in err.getvalue()
+    assert "not allowed" in err.getvalue()
 
 
 # --- --max-count / -m ----------------------------------------------------
@@ -1534,7 +1542,7 @@ def test_grep_max_count_caps_per_file_matches(tmp_path: Path) -> None:
         "def use():\n"
         "    save(); save(); save(); save(); save()\n"
     )
-    results, _, _ = grep("save", [src], max_count=2)
+    results = grep("save", [src], max_count=2).files
     assert len(results) == 1
     fr = results[0]
     assert len(fr.matches) == 2
@@ -1545,7 +1553,7 @@ def test_grep_max_count_no_op_when_under_cap(tmp_path: Path) -> None:
     """File with fewer matches than the cap is unaffected."""
     src = tmp_path / "mod.py"
     src.write_text("def save(): pass\nsave()\n")
-    results, _, _ = grep("save", [src], max_count=10)
+    results = grep("save", [src], max_count=10).files
     fr = results[0]
     assert len(fr.matches) == 2
     assert fr.truncated_count == 0
@@ -1567,7 +1575,7 @@ def test_grep_max_count_applies_after_noise_filter(tmp_path: Path) -> None:
         "    save()\n"
         "    save()\n"
     )
-    results, _, _ = grep("save", [src], max_count=2)
+    results = grep("save", [src], max_count=2).files
     fr = results[0]
     assert len(fr.matches) == 2
     assert fr.truncated_count == 0
@@ -1582,7 +1590,7 @@ def test_render_includes_truncation_footer(tmp_path: Path) -> None:
         "def use():\n"
         "    save(); save(); save(); save(); save()\n"
     )
-    results, _, _ = grep("save", [src], max_count=2)
+    results = grep("save", [src], max_count=2).files
     rendered = render_grep(results)
     assert "truncated" in rendered
     assert "3 more" in rendered
@@ -1597,7 +1605,7 @@ def test_render_truncation_footer_singular(tmp_path: Path) -> None:
         "def use():\n"
         "    save(); save(); save()\n"
     )
-    results, _, _ = grep("save", [src], max_count=2)
+    results = grep("save", [src], max_count=2).files
     rendered = render_grep(results)
     assert "1 more match" in rendered
     assert "1 more matches" not in rendered
@@ -1675,7 +1683,7 @@ def test_grep_kind_filter_def_only(tmp_path: Path) -> None:
         "    save()\n"
         "    handler = save\n"
     )
-    results, _, _ = grep("save", [src], kind_filter={KIND_DEF})
+    results = grep("save", [src], kind_filter={KIND_DEF}).files
     kinds = _kinds(results)
     assert kinds == [KIND_DEF]
     assert KIND_CALL not in kinds
@@ -1693,7 +1701,7 @@ def test_grep_kind_filter_call_excludes_def_and_ref(tmp_path: Path) -> None:
         "    save()\n"
         "    handler = save\n"
     )
-    results, _, _ = grep("save", [src], kind_filter={KIND_CALL})
+    results = grep("save", [src], kind_filter={KIND_CALL}).files
     kinds = _kinds(results)
     assert kinds == [KIND_CALL]
 
@@ -1709,7 +1717,7 @@ def test_grep_kind_filter_multiple_kinds(tmp_path: Path) -> None:
         "    save()\n"
         "    handler = save\n"
     )
-    results, _, _ = grep("save", [src], kind_filter={KIND_CALL, KIND_REF})
+    results = grep("save", [src], kind_filter={KIND_CALL, KIND_REF}).files
     kinds = sorted(set(_kinds(results)))
     assert kinds == sorted([KIND_CALL, KIND_REF])
     assert KIND_DEF not in _kinds(results)
@@ -1724,7 +1732,7 @@ def test_grep_kind_filter_import_only(tmp_path: Path) -> None:
         "def use():\n"
         "    return User()\n"
     )
-    results, _, _ = grep("User", [src], kind_filter={KIND_IMPORT})
+    results = grep("User", [src], kind_filter={KIND_IMPORT}).files
     kinds = _kinds(results)
     assert kinds == [KIND_IMPORT]
 
@@ -1742,7 +1750,7 @@ def test_grep_kind_filter_skips_dont_count_as_noise(tmp_path: Path) -> None:
         "    save()\n"
         "    handler = save\n"
     )
-    results, _, _ = grep("save", [src], kind_filter={KIND_DEF})
+    results = grep("save", [src], kind_filter={KIND_DEF}).files
     fr = results[0]
     # Two matches dropped (call + ref) but they are not "hidden noise"
     # — the user explicitly asked for defs only, so no opt-in footer.
@@ -1767,11 +1775,11 @@ def test_grep_kind_filter_suppresses_noise_footer_when_irrelevant(
     # filter + kind narrow) so it rides ``kind_excluded``, not
     # ``filtered_count`` — the "--include-noise to see" footer would
     # be misleading under a non-comment --kind narrow.
-    results, _, _ = grep("save", [src], kind_filter={KIND_IMPORT})
+    results = grep("save", [src], kind_filter={KIND_IMPORT}).files
     fr = results[0]
     assert fr.filtered_count == 0  # footer wouldn't render — accurate
     # Sanity: without kind filter, the comment hit IS counted as hidden.
-    results_no_filter, _, _ = grep("save", [src])
+    results_no_filter = grep("save", [src]).files
     assert results_no_filter[0].filtered_count > 0
 
 
@@ -1787,12 +1795,12 @@ def test_grep_kind_filter_comment_requires_include_noise(tmp_path: Path) -> None
     )
     # Without include_noise: noise filter eats the comment match first;
     # file is still in results (filtered_count > 0) but matches list empty.
-    results, _, _ = grep("save", [src], kind_filter={KIND_COMMENT})
+    results = grep("save", [src], kind_filter={KIND_COMMENT}).files
     assert all(fr.matches == [] for fr in results)
     # With include_noise: comment match surfaces.
-    results, _, _ = grep(
+    results = grep(
         "save", [src], kind_filter={KIND_COMMENT}, include_noise=True
-    )
+    ).files
     kinds = _kinds(results)
     assert kinds == [KIND_COMMENT]
 
@@ -2158,7 +2166,7 @@ def _kinds_for_pattern(
     """
     src = tmp_path / f"sample.{ext}"
     src.write_text(source)
-    results, _, _ = grep(pattern, [src], **kwargs)
+    results = grep(pattern, [src], **kwargs).files
     if not results:
         return []
     return [(m.line, m.kind, m.line_content.strip()) for m in results[0].matches]
@@ -3352,7 +3360,7 @@ def test_grep_unicode_identifier_call_classifies_call(tmp_path: Path) -> None:
         "    obj.привет(x, y)\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("прив|привет", [src], is_regex=True)
+    results = grep("прив|привет", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"Cyrillic identifier call must classify as call, got {kinds}"
@@ -3373,7 +3381,7 @@ def test_grep_cjk_identifier_call_classifies_call(tmp_path: Path) -> None:
         "    obj.漢字(x)\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("漢|漢字", [src], is_regex=True)
+    results = grep("漢|漢字", [src], is_regex=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"CJK identifier call must classify as call, got {kinds}"
@@ -3399,7 +3407,7 @@ def test_grep_ascii_call_after_unicode_prefix_classifies_call(
         "    привет = bar()\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("bar", [src])
+    results = grep("bar", [src]).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_CALL in kinds, (
         f"ASCII call after Unicode prefix must classify as call, got {kinds}"
@@ -3425,7 +3433,7 @@ def test_grep_match_inside_string_after_unicode_prefix_classifies_string(
         '    привет = "test bar"\n',
         encoding="utf-8",
     )
-    results, _, _ = grep("bar", [src])
+    results = grep("bar", [src]).files
     # Default mode filters out string matches → zero visible matches.
     visible_kinds = [m.kind for m in results[0].matches] if results else []
     assert KIND_REF not in visible_kinds, (
@@ -3434,7 +3442,7 @@ def test_grep_match_inside_string_after_unicode_prefix_classifies_string(
     )
     # With include_noise the string match surfaces — confirm the
     # classification went the right way, not that we silently dropped it.
-    results_noise, _, _ = grep("bar", [src], include_noise=True)
+    results_noise = grep("bar", [src], include_noise=True).files
     noise_kinds = [m.kind for m in results_noise[0].matches]
     assert KIND_STRING in noise_kinds, (
         f"match inside string literal must classify as string, got {noise_kinds}"
@@ -3459,7 +3467,7 @@ def test_grep_inline_comment_after_unicode_prefix_classifies_comment(
         "    x = 1  # привет foo here\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("foo", [src], include_noise=True)
+    results = grep("foo", [src], include_noise=True).files
     kinds = [m.kind for m in results[0].matches]
     assert kinds == [KIND_COMMENT], (
         f"match past inline comment marker must classify as comment, got {kinds}"
@@ -3480,7 +3488,7 @@ def test_grep_match_column_is_codepoint_offset(tmp_path: Path) -> None:
         "    привет = bar()\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("bar", [src])
+    results = grep("bar", [src]).files
     matches = results[0].matches
     assert len(matches) == 1
     assert matches[0].column == 14, (
@@ -3879,7 +3887,7 @@ def test_grep_rust_lifetime_quote_does_not_open_string(tmp_path: Path) -> None:
         "}\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("str", [src])
+    results = grep("str", [src]).files
     assert results, "expected visible matches on the lifetime line"
     line1 = [m for m in results[0].matches if m.line == 1]
     assert len(line1) == 2, (
@@ -3900,7 +3908,7 @@ def test_grep_rust_char_literal_still_classifies_string(tmp_path: Path) -> None:
         "}\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("x", [src], include_noise=True)
+    results = grep("x", [src], include_noise=True).files
     kinds = [m.kind for m in results[0].matches]
     assert KIND_STRING in kinds, (
         f"char-literal content must classify as string, got {kinds}"
@@ -3921,7 +3929,7 @@ def test_grep_word_match_finds_cyrillic_identifier(tmp_path: Path) -> None:
         "    return привет\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("привет", [src], word_match=True)
+    results = grep("привет", [src], word_match=True).files
     assert results, "whole-word Cyrillic search must find matches"
     lines = sorted(m.line for m in results[0].matches)
     # L1 and L3 are standalone words; привет_мир on L2 must NOT match
@@ -3934,7 +3942,7 @@ def test_grep_case_insensitive_folds_cyrillic(tmp_path: Path) -> None:
     never matched ``привет``. str-mode IGNORECASE folds Unicode."""
     src = tmp_path / "uni.py"
     src.write_text("привет = 1\n", encoding="utf-8")
-    results, _, _ = grep("ПРИВЕТ", [src], case_insensitive=True)
+    results = grep("ПРИВЕТ", [src], case_insensitive=True).files
     assert results and results[0].matches, (
         "case-insensitive Cyrillic search must find the lowercase form"
     )
@@ -3952,7 +3960,7 @@ def test_grep_regex_offsets_exact_after_multibyte_prefix(tmp_path: Path) -> None
         "    pass\n",
         encoding="utf-8",
     )
-    results, _, _ = grep("target", [src], is_regex=True)
+    results = grep("target", [src], is_regex=True).files
     m = results[0].matches[0]
     assert (m.line, m.kind) == (2, KIND_DEF), (m.line, m.kind)
     assert m.column == 5
@@ -3965,7 +3973,7 @@ def test_grep_regex_offsets_survive_invalid_utf8(tmp_path: Path) -> None:
     shift every following match)."""
     src = tmp_path / "bad.py"
     src.write_bytes(b"x = b'\xff\xfe'\ntarget = 2\n")
-    results, _, _ = grep("target", [src], is_regex=True)
+    results = grep("target", [src], is_regex=True).files
     assert results and results[0].matches, "match after invalid bytes lost"
     m = results[0].matches[0]
     assert (m.line, m.column) == (2, 1), (m.line, m.column)

@@ -230,9 +230,12 @@ def test_render_show_candidates_path_form():
     p = Path.cwd() / "pkg" / "mod.py"
     found = [(p, SimpleNamespace(start_line=10, end_line=24, kind="class"))]
     # Text note: cwd-relative.
-    assert _render_show_candidates(found) == "pkg/mod.py:10-24 (class)"
+    assert _render_show_candidates(found) == "pkg/mod.py (class L10-24)"
     # JSON note: absolute, matching the structured `file` field.
-    assert _render_show_candidates(found, absolute=True) == f"{p.as_posix()}:10-24 (class)"
+    assert (
+        _render_show_candidates(found, absolute=True)
+        == f"{p.as_posix()} (class L10-24)"
+    )
 
 
 def test_show_not_found_returns_zero_with_note(csharp_dir, capsys):
@@ -358,7 +361,7 @@ def test_show_full_alias_equals_default(csharp_dir, capsys):
 def test_show_view_aliases_are_mutually_exclusive(csharp_dir, capsys):
     """argparse's mutex group rejects `--signature --full` so the agent can
     never accidentally pass both. The CLI's LLM-friendly error path turns
-    the parse failure into a `# note:` on stdout with rc=0."""
+    the parse failure into a `# note:` on stderr with rc=0."""
     rc = main(
         [
             "show",
@@ -370,8 +373,8 @@ def test_show_view_aliases_are_mutually_exclusive(csharp_dir, capsys):
     )
     captured = capsys.readouterr()
     assert rc == 0
-    assert "# note:" in captured.out
-    assert "not allowed" in captured.out.lower()
+    assert "# note:" in captured.err
+    assert "not allowed" in captured.err.lower()
 
 
 def test_show_signature_view_python_keeps_docstring_after_sig(python_dir, capsys):
@@ -478,11 +481,11 @@ def test_show_dir_multiple_definitions_lists_candidates(tmp_path, capsys):
     out = captured.out
     # The note states the count and asks the agent to re-run against one.
     assert "# note: 2 definitions of 'Widget'" in out
-    assert "re-run with one of:" in out
+    assert "re-run against one file:" in out
     # Both candidate files are named in the list (with line/kind locators).
     assert "a.cs" in out
     assert "b.cs" in out
-    assert "(class)" in out
+    assert "(class L" in out
     # No code body is printed — neither definition's distinctive field leaks.
     assert "int A;" not in out
     assert "int B;" not in out
@@ -638,7 +641,7 @@ def test_show_dir_mixed_arity_per_symbol_independent(tmp_path, capsys):
     assert "int Only;" in out
     # `Dup` (N=2) prints a candidate list, no body.
     assert "# note: 2 definitions of 'Dup'" in out
-    assert "re-run with one of:" in out
+    assert "re-run against one file:" in out
     assert "int A;" not in out
     assert "int B;" not in out
 
@@ -681,7 +684,7 @@ def test_show_dir_json_ambiguous_lists_candidates_without_bodies(tmp_path, capsy
         # No code body anywhere — the whole point of the ambiguous branch.
         assert "source" not in m
     # The re-run guidance is also echoed in the envelope notes.
-    assert any("re-run with one of" in n for n in doc["notes"])
+    assert any("re-run against one file" in n for n in doc["notes"])
     # And the dumped field values must not appear anywhere in the JSON text.
     assert "int A;" not in captured.out
     assert "int B;" not in captured.out
@@ -932,12 +935,13 @@ def test_digest_invalid_format_value_rejected_with_note(csharp_dir, capsys):
     Same LLM-friendly error path as every other bad arg: rc=0 with a
     `# note:` line on stdout. This pins the contract — adding a new
     format must extend the `choices` list rather than relying on a
-    free-form string."""
+    free-form string. Argument errors go to stderr — see
+    `test_bad_subcommand_returns_zero_with_note`."""
     rc = main(["digest", str(csharp_dir), "--format=verbose"])  # not a valid choice
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    assert "# note:" in out
-    assert "invalid choice" in out.lower() or "--format" in out
+    assert "# note:" in err
+    assert "invalid choice" in err.lower() or "--format" in err
 
 
 # --- LLM-friendly error handling -----------------------------------------
@@ -945,12 +949,14 @@ def test_digest_invalid_format_value_rejected_with_note(csharp_dir, capsys):
 
 def test_bad_subcommand_returns_zero_with_note(capsys):
     """A bogus subcommand must NOT call ``sys.exit`` with a non-zero code —
-    that breaks parallel bash chains in Claude Code. Instead we expect a
-    ``# note:`` line on stdout and rc=0."""
+    that breaks parallel bash chains in Claude Code. The note goes to
+    stderr: nothing ran, so stdout has no answer to carry, and a piped
+    caller must not read the complaint as an empty result."""
     rc = main(["help", "doesnotexist"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "# note:" in captured.out
+    assert captured.out == ""
+    assert "# note:" in captured.err
 
 
 def test_signature_on_outline_is_repaired_not_bounced(tmp_path, capsys):
@@ -1030,7 +1036,7 @@ def test_unrepairable_flag_keeps_plain_failure_note(tmp_path, capsys):
     rc = main(["outline", str(f), "--bogus"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "unrecognized arguments: --bogus" in captured.out
+    assert "unrecognized arguments: --bogus" in captured.err
     assert "def foo()" not in captured.out  # nothing was guessed and run
 
 
@@ -1056,7 +1062,7 @@ def test_repair_aborts_when_extra_unknown_flags_remain(tmp_path, capsys):
     rc = main(["outline", str(f), "--signature", "--bogus"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "unrecognized arguments" in captured.out
+    assert "unrecognized arguments" in captured.err
     assert "def foo()" not in captured.out
 
 
@@ -1068,8 +1074,8 @@ def test_cross_command_flag_hint_absent_for_truly_unknown_flag(tmp_path, capsys)
     rc = main(["outline", str(f), "--definitely-not-a-flag"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "# note:" in captured.out
-    assert "hint:" not in captured.out
+    assert "# note:" in captured.err
+    assert "hint:" not in captured.err
 
 
 def test_cross_command_flag_hint_with_equals_form(tmp_path, capsys):
@@ -1080,8 +1086,8 @@ def test_cross_command_flag_hint_with_equals_form(tmp_path, capsys):
     rc = main(["outline", str(f), "--view=signature"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "`--view` is a flag of `show`" in captured.out
-    assert "not `outline`" in captured.out
+    assert "`--view` is a flag of `show`" in captured.err
+    assert "not `outline`" in captured.err
 
 
 def test_cross_command_flag_hint_short_flag(tmp_path, capsys):
@@ -1092,7 +1098,7 @@ def test_cross_command_flag_hint_short_flag(tmp_path, capsys):
     rc = main(["outline", str(f), "-l"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "`-l` is a flag of `grep`" in captured.out
+    assert "`-l` is a flag of `grep`" in captured.err
 
 
 def test_cross_command_flag_hint_lists_all_owners(tmp_path, capsys):
@@ -1104,11 +1110,11 @@ def test_cross_command_flag_hint_lists_all_owners(tmp_path, capsys):
     rc = main(["show", str(f), "foo", "--imports"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert "# note:" in captured.out
-    assert "`--imports` is a flag of" in captured.out
-    assert "`outline`" in captured.out
-    assert "`digest`" in captured.out
-    assert "not `show`" in captured.out
+    assert "# note:" in captured.err
+    assert "`--imports` is a flag of" in captured.err
+    assert "`outline`" in captured.err
+    assert "`digest`" in captured.err
+    assert "not `show`" in captured.err
 
 
 def test_show_missing_file_returns_zero_with_note(tmp_path, capsys):
@@ -1181,3 +1187,531 @@ def test_digest_all_files_fail_emits_notes_on_stdout(tmp_path, monkeypatch, caps
     assert "# no files" not in captured.out
 
 
+
+# --- grep diagnosability (issues #10, #11, #14) --------------------------
+
+
+def _repro_tree(tmp_path):
+    """A tree where each empty result has a different cause.
+
+    `pkg` holds real code, `ignored` is gitignored, `notes` holds only
+    an unsupported extension. Mirrors the repro in issue #11.
+    """
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "store.py").write_text(
+        "class Store:\n"
+        "    def get_user(self, uid):\n"
+        "        return self._rows[uid]\n"
+        "\n"
+        "\n"
+        "def main(store):\n"
+        "    return store.get_user(1), store.get_user(2)\n"
+    )
+    (tmp_path / "ignored").mkdir()
+    (tmp_path / "ignored" / "store.py").write_text(
+        (tmp_path / "pkg" / "store.py").read_text()
+    )
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "readme.txt").write_text("get_user everywhere\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".gitignore").write_text("ignored/\n")
+    return tmp_path
+
+
+def test_grep_note_reports_files_scanned(tmp_path, capsys):
+    """An honest zero says how much ground it covered.
+
+    Without the count, "no matches" is the same sentence whether one
+    file was searched or none were — and the caller reads the second
+    as "the symbol is unused" (issue #11).
+    """
+    root = _repro_tree(tmp_path)
+    rc = main(["grep", "no_such_symbol", str(root / "pkg")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no matches for 'no_such_symbol' (1 file scanned)" in out
+    # A real zero must NOT carry the "nothing was searched" rescue.
+    assert "nothing was searched" not in out
+
+
+def test_grep_zero_scanned_is_distinguishable_from_honest_zero(tmp_path, capsys):
+    """Gitignored-away and unsupported-extension both scan nothing."""
+    root = _repro_tree(tmp_path)
+
+    rc = main(["grep", "get_user", str(root / "ignored")])
+    ignored_out = capsys.readouterr().out
+    assert rc == 0
+    assert "(0 files scanned)" in ignored_out
+    assert "nothing was searched" in ignored_out
+    assert "--no-ignore" in ignored_out
+
+    rc = main(["grep", "get_user", str(root / "notes")])
+    unsupported_out = capsys.readouterr().out
+    assert rc == 0
+    assert "(0 files scanned)" in unsupported_out
+
+
+def test_grep_json_summary_carries_files_scanned(tmp_path, capsys):
+    import json
+
+    root = _repro_tree(tmp_path)
+    main(["grep", "no_such_symbol", str(root / "pkg"), "--json"])
+    honest = json.loads(capsys.readouterr().out)
+    main(["grep", "get_user", str(root / "ignored"), "--json"])
+    never_ran = json.loads(capsys.readouterr().out)
+
+    assert honest["summary"]["total_matches"] == 0
+    assert never_ran["summary"]["total_matches"] == 0
+    # The whole point: identical totals, different denominators.
+    assert honest["summary"]["files_scanned"] == 1
+    assert never_ran["summary"]["files_scanned"] == 0
+
+
+def test_grep_dead_pattern_is_reported_next_to_a_live_one(tmp_path, capsys):
+    """A matching `-e` used to swallow the diagnosis of a dead one."""
+    root = _repro_tree(tmp_path)
+    rc = main(["grep", "-e", "get_user", "-e", r"\.nosuch(", str(root / "pkg")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "-e '\\.nosuch(' matched nothing" in out
+    assert "retry with --regex" in out
+    # The live pattern still renders its matches.
+    assert "get_user" in out
+
+
+def test_grep_json_attributes_matches_per_pattern(tmp_path, capsys):
+    import json
+
+    root = _repro_tree(tmp_path)
+    main([
+        "grep", "-e", "get_user", "-e", r"\.nosuch(",
+        str(root / "pkg"), "--json",
+    ])
+    obj = json.loads(capsys.readouterr().out)
+    assert obj["patterns"] == [
+        {"pattern": "get_user", "matches": 3},
+        {
+            "pattern": r"\.nosuch(",
+            "matches": 0,
+            # The count alone would leave a JSON consumer knowing THAT
+            # the pattern found nothing but not why — the text mode
+            # prints the repair, so the machine-readable form carries it
+            # too.
+            "notes": [
+                "contains regex-like syntax; if you meant regex, "
+                "retry with --regex"
+            ],
+        },
+    ]
+
+
+def test_grep_pattern_in_note_is_printed_as_typed(tmp_path, capsys):
+    """`!r` re-escaped the pattern, so the note showed a string the
+    user could not paste back into a retry (issue #14)."""
+    root = _repro_tree(tmp_path)
+    main(["grep", r"\.greet(", str(root / "pkg")])
+    out = capsys.readouterr().out
+    assert r"no matches for '\.greet('" in out
+    assert r"\\.greet(" not in out
+
+
+def test_grep_count_mode_keeps_notes_off_stdout(tmp_path, capsys):
+    """`-c` output is summed by `awk` — a note there reads as data."""
+    root = _repro_tree(tmp_path)
+    rc = main(["grep", "get_user", "-c", str(root / "nosuchdir")])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""
+    assert "# note: path not found" in captured.err
+
+
+def test_grep_files_mode_keeps_notes_off_stdout(tmp_path, capsys):
+    """`-l` output is fed to `while read` — a note there is opened
+    as a filename."""
+    root = _repro_tree(tmp_path)
+    rc = main(["grep", "get_user", "-l", str(root / "nosuchdir")])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""
+    assert "# note: path not found" in captured.err
+
+
+def test_grep_count_mode_routes_empty_result_notes_to_stderr(tmp_path, capsys):
+    root = _repro_tree(tmp_path)
+    rc = main([
+        "grep", "get_user", "--kind", "ref", "-c", str(root / "pkg"),
+    ])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""
+    assert "no matches for 'get_user'" in captured.err
+    assert "--kind ref excluded" in captured.err
+
+
+def test_grep_text_mode_keeps_notes_on_stdout(tmp_path, capsys):
+    """The default render is read by an agent, not piped — there the
+    note IS the answer and must stay on stdout."""
+    root = _repro_tree(tmp_path)
+    rc = main(["grep", "no_such_symbol", str(root / "pkg")])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "# note: no matches" in captured.out
+    assert captured.err == ""
+
+
+# --- show: type vs its own constructor (issue #13) -----------------------
+
+
+def test_show_dir_prefers_type_over_its_own_constructor(tmp_path, capsys):
+    """In Java the constructor carries the class name, so every class
+    with one used to resolve as ambiguous and print nothing."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Greeter.java").write_text(
+        "package demo;\n"
+        "\n"
+        "public class Greeter {\n"
+        "  private final String name;\n"
+        "\n"
+        "  public Greeter(String name) {\n"
+        "    this.name = name;\n"
+        "  }\n"
+        "}\n"
+    )
+    rc = main(["show", str(src), "Greeter"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "definitions of 'Greeter'" not in out
+    assert "found 'Greeter' (class)" in out
+    assert "public class Greeter" in out
+
+
+def test_show_dir_constructor_still_addressable_qualified(tmp_path, capsys):
+    """Collapsing the pair must not make the constructor unreachable —
+    it stays available under its qualified name."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Greeter.java").write_text(
+        "package demo;\n"
+        "\n"
+        "public class Greeter {\n"
+        "  public Greeter(String name) {\n"
+        "  }\n"
+        "}\n"
+    )
+    rc = main(["show", str(src), "Greeter.Greeter"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "found 'Greeter.Greeter' (ctor)" in out
+
+
+def test_show_dir_signature_view_also_resolves_the_type(tmp_path, capsys):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Greeter.java").write_text(
+        "package demo;\n"
+        "\n"
+        "public class Greeter {\n"
+        "  public Greeter(String name) {\n"
+        "  }\n"
+        "}\n"
+    )
+    rc = main(["show", str(src), "Greeter", "--signature"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "found 'Greeter' (class)" in out
+
+
+def test_show_dir_collapse_applies_to_csharp_and_cpp(tmp_path, capsys):
+    """The convention is not Java-only — C# and C++ name constructors
+    after the type too."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "A.cs").write_text(
+        "namespace N { public class Widget { public Widget(int x) { } } }\n"
+    )
+    (src / "c.cpp").write_text(
+        "class Node {\n"
+        "public:\n"
+        "  Node(int v) : v_(v) {}\n"
+        "private:\n"
+        "  int v_;\n"
+        "};\n"
+    )
+    rc = main(["show", str(src), "Widget"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "found 'Widget' (class)" in out
+
+    rc = main(["show", str(src), "Node"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "found 'Node' (class)" in out
+
+
+def test_show_dir_keeps_reporting_genuine_ambiguity(tmp_path, capsys):
+    """Two unrelated types of the same name are still ambiguous — the
+    collapse is narrow, not a general "pick the first" rule."""
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y").mkdir()
+    (tmp_path / "x" / "a.cs").write_text(
+        "namespace X { public class Dup { public Dup() {} } }\n"
+    )
+    (tmp_path / "y" / "b.cs").write_text(
+        "namespace Y { public class Dup { public Dup() {} } }\n"
+    )
+    rc = main(["show", str(tmp_path), "Dup"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "2 definitions of 'Dup'" in out
+    assert "(class L" in out
+    # Both survivors are the types, not the constructors.
+    assert "(ctor L" not in out
+
+
+def test_grep_colliding_named_groups_stay_exit_zero(tmp_path, capsys):
+    """Two `-e` patterns declaring the same named group cannot be
+    combined into one regex — that must be a note, not a traceback."""
+    (tmp_path / "a.py").write_text("def f(): pass\n")
+    rc = main([
+        "grep", "--regex", "-e", "(?P<n>a)", "-e", "(?P<n>b)", str(tmp_path),
+    ])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "could not be combined" in out
+    assert "rename one" in out
+
+
+def test_grep_json_omits_patterns_array_for_a_single_pattern(tmp_path, capsys):
+    """The array would only restate `total_matches` — and every agent
+    call pays for those tokens."""
+    import json
+
+    (tmp_path / "a.py").write_text("def get_user(): pass\n")
+    main(["grep", "get_user", str(tmp_path), "--json"])
+    single = json.loads(capsys.readouterr().out)
+    assert "patterns" not in single
+
+    main(["grep", "-e", "get_user", "-e", "nosuch", str(tmp_path), "--json"])
+    multi = json.loads(capsys.readouterr().out)
+    assert [p["pattern"] for p in multi["patterns"]] == ["get_user", "nosuch"]
+
+
+# --- path-not-found rescue (AO-4) ----------------------------------------
+
+
+def test_path_rescue_points_at_the_same_name_elsewhere(tmp_path, monkeypatch, capsys):
+    """The mirror of the symbol rescue: the file usually exists, just
+    not where the caller said."""
+    (tmp_path / ".git").mkdir()
+    nested = tmp_path / "deep" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "store.py").write_text("def alpha(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["outline", "store.py"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "path not found: store.py" in out
+    assert "ast-outline outline deep/nested/store.py" in out
+
+
+def test_path_rescue_lists_candidates_when_ambiguous(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".git").mkdir()
+    for sub in ("one", "two"):
+        d = tmp_path / sub
+        d.mkdir()
+        (d / "dup.py").write_text("def x(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["outline", "dup.py"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "several files are named dup.py" in out
+    assert "one/dup.py" in out
+    assert "two/dup.py" in out
+
+
+def test_path_rescue_stays_silent_when_nothing_matches(tmp_path, monkeypatch, capsys):
+    """A typo with no match anywhere must not produce a guessed repair —
+    a wrong hint is worse than none, the caller acts on it."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "real.py").write_text("def x(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["outline", "totally_absent_xyz.py"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "path not found" in out
+    assert "# hint:" not in out
+
+
+def test_path_rescue_detects_a_subcommand_in_the_path_slot(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "a.py").write_text("def alpha(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["outline", "show", "alpha"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "'show' is a subcommand, not a path" in out
+
+
+def test_path_rescue_rejoins_an_unquoted_path_with_spaces(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".git").mkdir()
+    spaced = tmp_path / "The Sorting Bureau"
+    spaced.mkdir()
+    (spaced / "spaced.py").write_text("def beta(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["outline", "The", "Sorting", "Bureau/spaced.py"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'quote it: ast-outline outline "The Sorting Bureau/spaced.py"' in out
+
+
+def test_show_path_rescue_rejoins_spaces_around_the_symbol(tmp_path, monkeypatch, capsys):
+    """In `show` the split pieces land in the symbol slot, so the
+    generic rejoin can't see them."""
+    (tmp_path / ".git").mkdir()
+    spaced = tmp_path / "The Sorting Bureau"
+    spaced.mkdir()
+    (spaced / "spaced.py").write_text("def beta(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["show", "The", "Sorting", "Bureau/spaced.py", "beta"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'ast-outline show "The Sorting Bureau/spaced.py" beta' in out
+
+
+def test_grep_path_rescue_suggests_a_runnable_command(tmp_path, monkeypatch, capsys):
+    """The hint must be pasteable — `grep` needs its pattern before the
+    path, `show` its symbol after it."""
+    (tmp_path / ".git").mkdir()
+    nested = tmp_path / "deep"
+    nested.mkdir()
+    (nested / "store.py").write_text("def alpha(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["grep", "alpha", "store.py"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ast-outline grep alpha deep/store.py" in out
+
+    rc = main(["show", "store.py", "alpha"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ast-outline show deep/store.py alpha" in out
+
+
+# --- invocation grammar (issue #12) --------------------------------------
+
+
+def test_implicit_outline_accepts_a_leading_flag(tmp_path, capsys):
+    """"outline is the default" stopped being true the moment a flag was
+    attached — the rule an agent learns must hold with flags on."""
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    '''Doc.'''\n    pass\n")
+    rc = main(["--no-docs", str(f)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "def foo()" in out
+
+
+def test_implicit_outline_still_works_without_flags(tmp_path, capsys):
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main([str(f)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "def foo()" in out
+
+
+def test_mistyped_subcommand_is_diagnosed_as_a_subcommand(tmp_path, capsys):
+    """`outlien x.java` used to answer "path not found: outlien" —
+    pointing the diagnosis away from the actual mistake."""
+    f = tmp_path / "sample.py"
+    f.write_text("def foo():\n    pass\n")
+    rc = main(["outlien", str(f)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "unknown subcommand: outlien" in captured.err
+    assert "did you mean 'outline'?" in captured.err
+    assert "path not found" not in captured.err
+
+
+def test_a_real_file_named_like_a_subcommand_is_still_outlined(tmp_path, monkeypatch, capsys):
+    """The typo check must not hijack an existing file whose name happens
+    to resemble a subcommand."""
+    (tmp_path / "outlines.md").write_text("# Heading\n")
+    monkeypatch.chdir(tmp_path)
+    rc = main(["outlines.md"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "outlines.md" in out
+    assert "unknown subcommand" not in out
+
+
+def test_unknown_first_word_far_from_any_subcommand_is_a_path(tmp_path, capsys):
+    """No close subcommand → the old reading (it's a path) stands, so a
+    genuine missing file keeps its own diagnosis and its rescue."""
+    rc = main(["totally_unrelated_word.py"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "path not found" in captured.out
+    assert "unknown subcommand" not in captured.out
+
+
+def test_mistyped_subcommand_in_json_mode_stays_parseable(tmp_path, capsys):
+    import json
+
+    rc = main(["outlien", "x.py", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    obj = json.loads(out)
+    assert "unknown subcommand: outlien" in obj["error"]["notes"][0]
+
+
+def test_global_help_still_describes_the_whole_tool(capsys):
+    """`--help` must not be swallowed by the implicit `outline`."""
+    try:
+        main(["--help"])
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+    assert "outline" in out and "grep" in out and "digest" in out
+
+
+def test_missing_file_named_like_a_subcommand_keeps_its_path_diagnosis(tmp_path, monkeypatch, capsys):
+    """`grep.py` / `show.py` / `outline.py` are ordinary module names.
+    A *missing* one must still be diagnosed as a missing path — with its
+    rescue — not as a mistyped subcommand."""
+    (tmp_path / ".git").mkdir()
+    nested = tmp_path / "pkg"
+    nested.mkdir()
+    (nested / "grep.py").write_text("def run(): pass\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["grep.py"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "path not found: grep.py" in captured.out
+    assert "unknown subcommand" not in captured.out + captured.err
+    # And the path rescue still fires for it.
+    assert "pkg/grep.py" in captured.out
+
+
+def test_show_body_header_uses_the_one_line_vocabulary(tmp_path, capsys):
+    """The header above a body must not spell the location as
+    `path:start-end`. That form mimics the universal `path:LINE` address
+    without being one — nothing accepts a dash-range, this tool
+    included — and agents were observed pasting it back into a command.
+    Every renderer says `L<start>-<end>`; so does this."""
+    f = tmp_path / "sample.py"
+    f.write_text("class Widget:\n    def go(self):\n        pass\n")
+    rc = main(["show", str(f), "Widget"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "(class L1-3)" in out
+    assert "sample.py:1-3" not in out

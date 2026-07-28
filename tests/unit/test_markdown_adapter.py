@@ -375,7 +375,7 @@ def test_grep_shows_fenced_code_block_matches_tagged_string(md_dir):
     strings-visible default. HTML comments stay hidden.
     """
     path = md_dir / "grep_noise.md"
-    results, _ignored, _excluded = grep("useState", [path])
+    results = grep("useState", [path]).files
     assert results
     fr = results[0]
     by_line = {m.line: m for m in fr.matches}
@@ -399,8 +399,8 @@ def test_grep_include_noise_surfaces_html_comment_matches(md_dir):
     """``include_noise=True`` re-surfaces the HTML-comment hits — the
     only category still hidden by default."""
     path = md_dir / "grep_noise.md"
-    visible_default, _, _ = grep("useState", [path])
-    all_with_noise, _, _ = grep("useState", [path], include_noise=True)
+    visible_default = grep("useState", [path]).files
+    all_with_noise = grep("useState", [path], include_noise=True).files
     # Exactly the comment hits are the difference.
     delta = (
         sum(len(fr.matches) for fr in all_with_noise)
@@ -432,7 +432,7 @@ def test_grep_filters_html_comment_matches(md_dir):
     noise filter — the agent doesn't need draft / TODO annotations
     surfacing alongside real prose."""
     path = md_dir / "grep_noise.md"
-    results, _, _ = grep("useState", [path])
+    results = grep("useState", [path]).files
     fr = results[0]
     src_lines = path.read_text().splitlines()
     for m in fr.matches:
@@ -446,7 +446,7 @@ def test_grep_html_comment_surfaces_as_comment_kind_with_include_noise(md_dir):
     tagged ``[comment]`` (not ``[string]``) — the kind annotation
     helps the agent triage why a match was previously hidden."""
     path = md_dir / "grep_noise.md"
-    results, _, _ = grep("useState", [path], include_noise=True)
+    results = grep("useState", [path], include_noise=True).files
     fr = results[0]
     # Find the match on the multi-line comment's TODO line.
     matches_with_todo = [m for m in fr.matches if "TODO: revisit useState" in m.line_content]
@@ -460,7 +460,7 @@ def test_grep_div_block_keeps_html_searchable(md_dir):
     carries searchable signal (data attrs, IDs) and the user might
     legitimately grep for it."""
     path = md_dir / "grep_noise.md"
-    results, _, _ = grep("useState", [path])
+    results = grep("useState", [path]).files
     fr = results[0]
     matches_in_div = [m for m in fr.matches if "<div data-tag=" in m.line_content]
     assert matches_in_div, "div-block useState should remain visible"
@@ -479,7 +479,7 @@ def test_grep_noise_fixture_snapshot_default(md_dir):
     fails this test instead of slipping through.
     """
     path = md_dir / "grep_noise.md"
-    results, _ignored, _excluded = grep("useState", [path])
+    results = grep("useState", [path]).files
     assert len(results) == 1
     fr = results[0]
     visible = {(m.line, m.column): m for m in fr.matches}
@@ -513,7 +513,7 @@ def test_grep_noise_fixture_snapshot_include_noise(md_dir):
     """Pin down the include-noise breakdown — every category surfaces
     with the kind tag designed for it (string vs comment vs ref)."""
     path = md_dir / "grep_noise.md"
-    results, _, _ = grep("useState", [path], include_noise=True)
+    results = grep("useState", [path], include_noise=True).files
     fr = results[0]
     # 11 visible by default + 2 hidden comment hits = 13 total.
     assert len(fr.matches) == 13

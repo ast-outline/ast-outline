@@ -9,6 +9,7 @@
 > structural-grep for usages, trace imports. Cheaper, faster agent runs that
 > don't drown in large codebases.
 
+[![tests](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml/badge.svg)](https://github.com/ast-outline/ast-outline/actions/workflows/tests.yml)
 [![Code: Apache 2.0](https://img.shields.io/badge/code-Apache%202.0-blue.svg)](./LICENSE)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](./LICENSE-DOCS)
 [![PyPI](https://img.shields.io/pypi/v/ast-outline.svg)](https://pypi.org/project/ast-outline/)
@@ -203,7 +204,8 @@ Each command takes one or more paths (files or directories, mixed languages
 fine). All flags and the full output format reference live in
 [the docs](https://ast-outline.github.io/commands/).
 
-- **`outline <paths…>`** — default. Signatures with `L<start>-<end>` line
+- **`outline <paths…>`** — default: anything that isn't a subcommand runs
+  it, flags included (`ast-outline --no-docs x.java` works). Signatures with `L<start>-<end>` line
   ranges, no bodies. Add `--imports` to surface each file's
   `import` / `use` / `using` line in native syntax. Filters: `--no-private`,
   `--no-fields`, `--no-docs`, `--no-attrs`.
@@ -218,14 +220,18 @@ fine). All flags and the full output format reference live in
   Suffix matching for code (`Foo.Bar` matches `*.Foo.Bar`); case-insensitive
   substring for Markdown headings; dotted key path for YAML; selector token for
   CSS / SCSS; table or `table.column` for SQL. `--signature` returns header
-  only.
+  only. The first argument can also be a **directory or glob** — `show src/
+  User` finds the file itself, no separate search call.
 
 - **`grep <pattern> <paths…>`** — AST-aware structural search. Matches grouped
   by enclosing class / function, with kind tags `[def]` / `[import]` (calls and
   refs render untagged — the `(` after the symbol makes them obvious). Comment
   / string noise filtered by default. POSIX flags `-e` (multi-pattern, one
   walk), `-w`, `-l`, `-c`, `-m`, `-i` work as in `grep` / `rg`. Regex is
-  auto-detected. `--kind def|call|ref|import` narrows by classification.
+  auto-detected. `--kind def|call|ref|import` narrows by classification —
+  the split is syntactic, so `call` is an identifier followed by `(` and
+  `ref` is every other mention (a method's usages are nearly all `call`).
+  For every usage, drop `--kind` and read `kind_counts` from `--json`.
 
 - **`prompt`** — print the canonical agent-context snippet (used by
   `setup-prompt`). Manual install path:

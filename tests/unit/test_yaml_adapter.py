@@ -567,7 +567,7 @@ def test_grep_shows_block_scalar_matches_tagged_string(yaml_dir):
     from ast_outline.grep import grep
 
     path = yaml_dir / "grep_noise.yaml"
-    results, _ignored, _excluded = grep("npm", [path])
+    results = grep("npm", [path]).files
     assert results
     fr = results[0]
     src_lines = path.read_text().splitlines()
@@ -588,8 +588,8 @@ def test_grep_include_noise_surfaces_yaml_comment_matches(yaml_dir):
     from ast_outline.grep import grep
 
     path = yaml_dir / "grep_noise.yaml"
-    visible_default, _, _ = grep("npm", [path])
-    all_with_noise, _, _ = grep("npm", [path], include_noise=True)
+    visible_default = grep("npm", [path]).files
+    all_with_noise = grep("npm", [path], include_noise=True).files
     delta = (
         sum(len(fr.matches) for fr in all_with_noise)
         - sum(len(fr.matches) for fr in visible_default)

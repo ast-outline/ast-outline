@@ -138,9 +138,10 @@ def test_digest_payload_shape(python_dir, capsys):
 def test_grep_payload_shape(python_dir, capsys):
     obj = _run_json(["grep", "def", str(python_dir), "--json"], capsys)
     assert set(obj["summary"]) == {
-        "total_matches", "files_with_matches",
+        "files_scanned", "total_matches", "files_with_matches",
         "filtered_count", "truncated_count", "kind_counts",
     }
+    assert obj["summary"]["files_scanned"] > 0
     if obj["files"]:
         fr = obj["files"][0]
         for key in ("path", "language", "matches",

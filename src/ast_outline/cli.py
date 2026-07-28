@@ -6,12 +6,28 @@ This CLI is consumed primarily by LLM agents (Claude Code, Cursor, etc.).
 In those harnesses, a non-zero exit code from one tool call can fail the
 whole parallel batch of bash invocations. So we deliberately do NOT use
 exit codes to signal "no match" or "file not found" — instead we print a
-short ``# note: ...`` line on stdout (the channel the agent reads as the
-answer) and return 0. Real internal crashes still propagate normally.
+short ``# note: ...`` line and return 0. Real internal crashes still
+propagate normally.
+
+Which stream carries that note is a separate question from the exit
+code. The default is stdout — there the note IS the answer ("no match"
+is the result of the query). Two cases go to stderr instead, still with
+exit 0:
+
+* **argument errors** (bad flag, unknown subcommand, mutually exclusive
+  pair) — nothing ran, so stdout has no answer to carry, and a note
+  there is read by a piped or truncated caller as "found nothing";
+* **``grep -c`` / ``grep -l`` advisories** — those two modes exist to be
+  piped, so their stdout is a data stream an ``awk`` sum or a ``while
+  read`` loop consumes verbatim.
+
+``--json`` always writes to stdout, errors included: there the document
+is the answer, and it carries its own ``error`` shape.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
 import glob
 import re
 import sys
@@ -33,8 +49,10 @@ from .adapters import (
 )
 from .core import (
     DigestOptions,
+    KIND_CTOR,
     OutlineOptions,
     ParseResult,
+    TYPE_KINDS,
     display_path,
     find_symbols,
     render_digest,
@@ -47,15 +65,24 @@ from . import json_output
 
 SUBCOMMANDS = {"outline", "show", "help", "digest", "prompt", "setup-prompt", "grep"}
 
+# difflib similarity above which a bare first word is read as a mistyped
+# subcommand rather than a path. Higher than difflib's own 0.6 default:
+# the alternative reading (it's a path) is a perfectly good one, so this
+# only fires for words that are clearly a slip — `outlien`, `digets` —
+# and leaves anything looser to the path-not-found diagnosis.
+_SUBCOMMAND_TYPO_CUTOFF = 0.7
+
 
 class _LLMArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that doesn't ``sys.exit`` on bad args.
 
     Default ``argparse`` behavior on bad arguments is to print to stderr
-    and call ``sys.exit(2)``. For an LLM-facing CLI that breaks parallel
-    bash chains in Claude Code. Instead we raise a sentinel exception
-    that ``main()`` turns into a short ``# note:`` line on stdout +
-    ``return 0``.
+    and call ``sys.exit(2)``. For an LLM-facing CLI the *exit code* is
+    the problem — it breaks parallel bash chains in Claude Code. Instead
+    we raise a sentinel exception that ``main()`` turns into a short
+    ``# note:`` line on **stderr** + ``return 0``: nothing ran, so
+    stdout has no answer to carry, and a note there would be read by a
+    piped caller as an empty result.
     """
 
     def error(self, message: str) -> None:  # type: ignore[override]
@@ -333,7 +360,45 @@ def main(argv: list[str] | None = None) -> int:
     # spell out a subcommand for a one-line capability check.
     if argv[0] in ("--version", "-V"):
         return _cmd_version(None)
-    if argv[0] not in SUBCOMMANDS and not argv[0].startswith("-"):
+    # A mistyped subcommand used to be read as a path, so the diagnosis
+    # pointed at the wrong thing entirely: `ast-outline outlien x.java`
+    # answered "path not found: outlien". Catch it before the implicit
+    # `outline` is inserted.
+    #
+    # Three guards, and the last two matter as much as the first: the word
+    # must not exist on disk (so a real `outlines.md` is still outlined),
+    # and it must be shaped like a bare word — no extension, no path
+    # separator. Without that shape check a *missing* file whose stem
+    # resembles a subcommand (`grep.py`, `show.py`, `outline.py` — ordinary
+    # module names) would be told it's a mistyped subcommand and lose its
+    # path-not-found rescue, which is a worse diagnosis than the one this
+    # check exists to fix.
+    looks_like_a_bare_word = not any(
+        ch in argv[0] for ch in (".", "/", "\\")
+    )
+    if (
+        argv[0] not in SUBCOMMANDS
+        and not argv[0].startswith("-")
+        and looks_like_a_bare_word
+        and not Path(argv[0]).exists()
+    ):
+        near = difflib.get_close_matches(
+            argv[0], sorted(SUBCOMMANDS), n=1, cutoff=_SUBCOMMAND_TYPO_CUTOFF
+        )
+        if near:
+            return _emit_error(
+                "--json" in argv, None,
+                [f"unknown subcommand: {argv[0]}"],
+                hint=f"did you mean '{near[0]}'?",
+                stream=sys.stderr if "--json" not in argv else None,
+            )
+    # Implicit `outline`: anything that isn't a subcommand runs it. This
+    # used to require the first argument to be a path, which made the
+    # rule "outline is the default" false the moment a flag was attached
+    # (`ast-outline --no-docs x.java` errored) — one grammar is easier to
+    # state, and to learn, than one with an exception. `--help` is left
+    # alone so it still describes the whole tool rather than `outline`.
+    if argv[0] not in SUBCOMMANDS and argv[0] not in ("-h", "--help"):
         argv = ["outline", *argv]
     if argv and argv[0] == "grep":
         argv = _normalize_grep_argv(argv)
@@ -569,8 +634,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KIND",
         help="Filter matches by kind: def | call | ref | import | "
              "comment | string. Repeatable (--kind def --kind call) or "
-             "comma-separated (--kind def,call). When 'comment' is "
-             "included, --include-noise is auto-enabled.",
+             "comma-separated (--kind def,call). The call/ref split is "
+             "syntactic: 'call' is an identifier followed by '(', 'ref' "
+             "is every other mention — so a method's usages are nearly "
+             "all 'call', a type's nearly all 'ref'. For every usage, "
+             "drop --kind and read kind_counts from --json. When "
+             "'comment' is included, --include-noise is auto-enabled.",
     )
     output_mode = p_grep.add_mutually_exclusive_group()
     output_mode.add_argument(
@@ -614,7 +683,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(json_output.error_json(cmd, [msg], hint or None))
                 return 0
             suffix = f" (hint: {hint})" if hint else ""
-            print(f"# note: {msg}{suffix}")
+            # An argument error goes to stderr, not stdout. Nothing ran,
+            # so there is no answer to put on the answer channel — and a
+            # `# note:` there is read by a piped or truncated caller as
+            # "found nothing" rather than "you typed it wrong". The exit
+            # code stays 0: batch safety is a separate concern from
+            # which stream carries the diagnosis.
+            print(f"# note: {msg}{suffix}", file=sys.stderr)
             return 0
 
         # Forgiveness layer: when the mistaken invocation has exactly
@@ -873,11 +948,119 @@ def _strip_note_prefix(s: str) -> str:
     return s
 
 
+# How many same-named files a path rescue will list before it stops
+# being a pointer and starts being a wall of text. Beyond this the note
+# says how many there are and shows the first few — enough to recognize
+# the right tree, not enough to drown the answer.
+_PATH_RESCUE_MAX_CANDIDATES = 5
+
+# Upper bound on files walked while looking for a basename match. The
+# rescue is best-effort: past this the note is simply omitted, exactly
+# as before it existed. A miss already cost the caller a wasted call, so
+# a bounded walk to recover the intended file is a good trade — but a
+# monorepo must not turn a typo into a stall.
+_PATH_RESCUE_MAX_FILES = 20000
+
+
+def _find_by_basename(name: str, *, no_ignore: bool = False) -> list[Path]:
+    """Files under the cwd whose own name is exactly ``name``.
+
+    The mirror of the same-directory rescue `show` already does for
+    symbols: a path that doesn't exist here often exists one directory
+    over, and the caller's next move is otherwise `find` or a blind
+    retry. Honors `.gitignore` and the supported-extension filter (the
+    same walk every command uses), so a hit is always a file the tool
+    could actually have read.
+    """
+    if not name or any(ch in name for ch in "*?["):
+        return []
+    collected = collect_files_with_stats([Path(".")], no_ignore=no_ignore)
+    out = []
+    for path in collected.files[:_PATH_RESCUE_MAX_FILES]:
+        if path.name == name:
+            out.append(path)
+            if len(out) > _PATH_RESCUE_MAX_CANDIDATES:
+                break
+    return out
+
+
+def _path_rescue_hint(
+    missing: list[Path], command: str, *, trailing: str = ""
+) -> str | None:
+    """Best-effort repair for a path that isn't where the caller said.
+
+    Three shapes, in the order they bite (all three came out of real
+    agent transcripts):
+
+    1. A subcommand sits in the path slot (`ast-outline file.py show X`)
+       — the caller wrote the arguments out of order.
+    2. The path was unquoted and the shell split it on spaces, so one
+       path arrived as several arguments (`show The Sorting Bureau/a.cs`).
+    3. The file simply lives elsewhere in the tree — the common case,
+       and the one the symbol rescue already covers for names.
+
+    ``command`` and ``trailing`` frame the suggested re-run so it is a
+    command the caller can paste, not a bare path: `grep` needs its
+    pattern before the path, `show` its symbol after it.
+
+    Returns ``None`` when nothing is confidently recoverable: a note
+    that guesses is worse than no note, since the caller acts on it.
+    """
+    tail = f" {trailing}" if trailing else ""
+    if not missing:
+        return None
+
+    # 1. Subcommand in the path slot.
+    for p in missing:
+        if p.name in SUBCOMMANDS and len(p.parts) == 1:
+            return (
+                f"'{p.name}' is a subcommand, not a path — it must come "
+                f"first: ast-outline {p.name} <paths…>"
+            )
+
+    # 2. Unquoted path with spaces: the pieces arrived as separate
+    # arguments, so re-joining them is a *verifiable* repair — we only
+    # suggest it when the joined path actually exists.
+    if len(missing) > 1:
+        joined = Path(" ".join(str(p) for p in missing))
+        if joined.exists():
+            return (
+                f"the path contains spaces and the shell split it into "
+                f"{len(missing)} arguments — quote it: "
+                f'ast-outline {command} "{joined}"{tail}'
+            )
+
+    # 3. Same basename elsewhere in the tree.
+    for p in missing:
+        candidates = _find_by_basename(p.name)
+        if not candidates:
+            continue
+        if len(candidates) == 1:
+            return (
+                f"found a file with that name elsewhere — "
+                f"ast-outline {command} {display_path(candidates[0])}{tail}"
+            )
+        shown = candidates[:_PATH_RESCUE_MAX_CANDIDATES]
+        rendered = ", ".join(display_path(c) for c in shown)
+        more = (
+            f" (and more)"
+            if len(candidates) > _PATH_RESCUE_MAX_CANDIDATES
+            else ""
+        )
+        return (
+            f"several files are named {p.name}{more} — re-run against one "
+            f"of: {rendered}"
+        )
+    return None
+
+
 def _emit_error(
     json_mode: bool,
     command: str | None,
     notes: list[str],
     hint: str | None = None,
+    *,
+    stream=None,
 ) -> int:
     """Print a user-facing failure, then return 0 (CLI exit-0 invariant).
 
@@ -885,6 +1068,13 @@ def _emit_error(
     consumer can always `json.loads()` stdout. In text mode each note
     is printed as a `# note:` line (a note that already carries the
     marker is printed verbatim).
+
+    `stream` overrides where the text-mode lines go. Modes whose stdout
+    is a parseable data stream (`grep -c` / `-l`) pass `sys.stderr`, so
+    a failed query surfaces as a failure instead of an extra data row —
+    an `awk` sum would otherwise read the note as a zero. The JSON
+    document always goes to stdout: there it *is* the answer, and the
+    error already has its own shape (`error.notes`, no `summary`).
     """
     if json_mode:
         clean = [_strip_note_prefix(n) for n in notes]
@@ -892,9 +1082,9 @@ def _emit_error(
         print(json_output.error_json(command, clean, clean_hint))
     else:
         for note in notes:
-            print(note if note.startswith("#") else f"# note: {note}")
+            print(note if note.startswith("#") else f"# note: {note}", file=stream)
         if hint:
-            print(hint if hint.startswith("#") else f"# hint: {hint}")
+            print(hint if hint.startswith("#") else f"# hint: {hint}", file=stream)
     return 0
 
 
@@ -915,6 +1105,7 @@ def _cmd_outline(args) -> int:
         return _emit_error(
             json_mode, "outline",
             [f"path not found: {p}" for p in missing],
+            hint=_path_rescue_hint(missing, "outline"),
         )
 
     exclude = getattr(args, "exclude", []) or []
@@ -995,9 +1186,16 @@ def _print_show_body(args, path, m) -> None:
     symbol was located. Emits no leading blank line; the caller owns the
     inter-body spacing.
     """
+    # Location reads `path (kind L<start>-<end>)`, not `path:start-end`.
+    # The joined form mimics the universal `path:LINE` address without
+    # being one — nothing accepts a dash-range, this tool included — and
+    # agents were observed pasting it straight back into a command
+    # (`digest file.cs:2-6` → "path not found"). `L<start>-<end>` is the
+    # spelling every other renderer already uses, so there is one line
+    # vocabulary across the whole tool instead of two.
     print(
-        f"# {display_path(path)}:{m.start_line}-{m.end_line}  "
-        f"{m.qualified_name}  ({m.kind})"
+        f"# {display_path(path)} ({m.kind} L{m.start_line}-{m.end_line})  "
+        f"{m.qualified_name}"
     )
     # Breadcrumb: show the enclosing namespace/class chain so the agent
     # knows what the extracted body is nested inside — without having
@@ -1070,12 +1268,12 @@ def _resolve_one_symbol(symbol, search_paths, *, no_ignore, exclude):
     # `find_symbols` below exact-matches the name token, so a
     # substring candidate like `MailSpecHelper` is collected cheaply
     # then dropped precisely.
-    file_results, _ignored, _excluded = grep(
+    file_results = grep(
         [name], search_paths,
         kind_filter={KIND_DEF},
         no_ignore=no_ignore,
         exclude=exclude,
-    )
+    ).files
     found = []
     for fr in file_results:
         if not fr.matches:
@@ -1105,12 +1303,55 @@ def _resolve_one_symbol(symbol, search_paths, *, no_ignore, exclude):
                 symbol, name, search_paths, no_ignore=no_ignore, exclude=exclude
             ),
         )
+    found = _drop_own_constructors(found)
     suggestions = []
     if not found:
         suggestions = suggest_similar_symbols(
             symbol, search_paths, no_ignore=no_ignore, exclude=exclude
         )
     return found, suggestions
+
+
+def _drop_own_constructors(found):
+    """Collapse the "type vs its own constructor" pseudo-ambiguity.
+
+    In Java, C# and C++ a constructor is named after its type, so
+    `show <dir> Greeter` resolves to two declarations of one name and
+    the ambiguity note fires — for *every* class with a constructor,
+    which made the directory form unusable on those languages (issue
+    #13). PHP is not affected: its constructor is always `__construct`,
+    so the two names never collide there. The caller who typed a bare type name has already said which
+    one they meant; the constructor stays reachable as `Greeter.Greeter`,
+    the same way any nested name is addressed.
+
+    Only constructors nested inside a matched type *in the same file*
+    are dropped. Genuine ambiguity — two unrelated declarations, or two
+    same-named types in different files — is untouched and still
+    reported.
+    """
+    if len(found) < 2:
+        return found
+    type_spans = [
+        (path, m.start_line, m.end_line)
+        for path, m in found
+        if m.kind in TYPE_KINDS
+    ]
+    if not type_spans:
+        return found
+    kept = [
+        (path, m)
+        for path, m in found
+        if not (
+            m.kind == KIND_CTOR
+            and any(
+                tpath == path and tstart <= m.start_line and m.end_line <= tend
+                for tpath, tstart, tend in type_spans
+            )
+        )
+    ]
+    # Never collapse to nothing: a lone constructor match (the type
+    # itself wasn't matched) has no owner in ``found`` and is the answer.
+    return kept or found
 
 
 def _merge_matches(primary, extra):
@@ -1218,10 +1459,16 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
 
     ``found`` is the list of ``(file_path, SymbolMatch)`` the resolver
     returned for one symbol. Each candidate is rendered as
-    ``path:start-end (kind)`` — the same shape as the body header
-    `show` itself prints — so the agent can re-run `show <file>
-    <symbol>` against exactly one of them, and the range lets it judge
-    body size before choosing (or slice the lines directly).
+    ``path (kind L<start>-<end>)`` so the agent can re-run
+    `show <file> <symbol>` against exactly one of them, and the range
+    lets it judge body size before choosing (or slice the lines
+    directly).
+
+    The path is deliberately NOT written as ``path:start-end``: that
+    reads as an argument you could paste back, and `show` does not
+    accept it — following the note verbatim answered "path not found"
+    and cost a second call for nothing. Keeping the range in a
+    parenthetical makes the file the only pasteable token.
 
     Path form follows the channel convention: the **text** note uses
     cwd-relative paths (``display_path``), matching the rest of the text
@@ -1232,7 +1479,7 @@ def _render_show_candidates(found, *, absolute: bool = False) -> str:
     """
     render = Path.as_posix if absolute else display_path
     return ", ".join(
-        f"{render(fpath)}:{m.start_line}-{m.end_line} ({m.kind})"
+        f"{render(fpath)} ({m.kind} L{m.start_line}-{m.end_line})"
         for fpath, m in found
     )
 
@@ -1289,8 +1536,9 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
                 # matches carry the structured form (see show_dir_json).
                 notes.append(
                     f"{len(found)} definitions of '{symbol}' "
-                    f"— re-run with one of: "
-                    f"{_render_show_candidates(found, absolute=True)}"
+                    f"— re-run against one file: "
+                    f"{_render_show_candidates(found, absolute=True)} "
+                    f"(e.g. show {found[0][0].as_posix()} {symbol})"
                 )
         print(json_output.show_dir_json(
             directory,
@@ -1326,9 +1574,12 @@ def _show_across(args, search_paths, *, directory, glob_pattern, json_mode: bool
             # the candidate locations and ask the agent to re-run against
             # one. This also mirrors how agents disambiguate in practice —
             # they pick one definition (or a named subset), never read all N.
+            example = display_path(found[0][0])
             print(
                 f"# note: {len(found)} definitions of '{symbol}' "
-                f"— re-run with one of: {_render_show_candidates(found)}"
+                f"— re-run against one file: "
+                f"{_render_show_candidates(found)} "
+                f"(e.g. show {example} {symbol})"
             )
     return 0
 
@@ -1429,7 +1680,30 @@ def _cmd_show(args) -> int:
             json_mode=json_mode,
         )
     if not path.is_file():
-        return _emit_error(json_mode, "show", [f"file not found: {path}"])
+        # An unquoted path with spaces splits across argv, and in
+        # `show` the leftover pieces land in the *symbol* slot rather
+        # than alongside the path — so the generic rejoin in
+        # `_path_rescue_hint` can't see them. Try the splits here: the
+        # last positional is the symbol, everything before it is the
+        # path. Only suggested when the rejoined path really exists.
+        for split in range(len(args.symbols) - 1, 0, -1):
+            joined = Path(" ".join([str(path)] + args.symbols[:split]))
+            if joined.exists():
+                return _emit_error(
+                    json_mode, "show",
+                    [f"file not found: {path}"],
+                    hint=(
+                        f"the path contains spaces and the shell split it "
+                        f"into several arguments — quote it: ast-outline "
+                        f'show "{joined}" {" ".join(args.symbols[split:])}'
+                    ),
+                )
+        return _emit_error(
+            json_mode, "show", [f"file not found: {path}"],
+            hint=_path_rescue_hint(
+                [path], "show", trailing=" ".join(args.symbols),
+            ),
+        )
     adapter = get_adapter_for(path)
     if adapter is None:
         if not path.suffix:
@@ -1575,18 +1849,48 @@ def _cmd_grep(args) -> int:
     # successful result. In text mode they print as `# note:` lines; in
     # JSON mode they ride in the envelope's `notes` field.
     advisory_notes: list[str] = []
+    # ``-c`` / ``-l`` exist to be piped, so their stdout is a data
+    # stream: a `# note:` line there becomes a row the caller sums,
+    # counts or opens as a filename. Route advisories to stderr in
+    # those modes only — in the default text render the note IS the
+    # answer and belongs on stdout. Exit code is untouched either way
+    # (see the module docstring on the exit-0 invariant).
+    machine_stdout = bool(
+        getattr(args, "files_only", False) or getattr(args, "count_only", False)
+    )
+    advisory_stream = sys.stderr if machine_stdout else None
+
+    def advise(line: str) -> None:
+        """Print one `# note:` / `# hint:` line on the advisory channel.
+
+        Every advisory in this command goes through here, so a branch
+        added later can't quietly leak diagnostics into the data stream
+        of `-c` / `-l` by forgetting the `file=` argument — which is the
+        exact failure this routing exists to prevent.
+        """
+        print(line, file=advisory_stream)
+
+    def fail(notes: list[str], hint: str | None = None) -> int:
+        """`_emit_error` bound to this command's advisory channel."""
+        return _emit_error(
+            json_mode, "grep", notes, hint=hint, stream=advisory_stream
+        )
 
     paths = [Path(p) for p in args.paths]
     missing = [p for p in paths if not p.exists()]
     if missing:
-        return _emit_error(
-            json_mode, "grep", [f"path not found: {p}" for p in missing]
+        return fail(
+            [f"path not found: {p}" for p in missing],
+            hint=_path_rescue_hint(
+                missing,
+                f"grep {args.pattern}" if args.pattern else "grep <pattern>",
+            ),
         )
 
     exclude = getattr(args, "exclude", []) or []
     bad = _validate_exclude(exclude)
     if bad:
-        return _emit_error(json_mode, "grep", [bad])
+        return fail([bad])
 
     # Collect all patterns from the positional slot + every ``-e``
     # flag. Order is preserved (positional first, then -e in CLI
@@ -1597,10 +1901,9 @@ def _cmd_grep(args) -> int:
         patterns.append(args.pattern)
     patterns.extend(p for p in args.extra_patterns if p)
     if not patterns:
-        return _emit_error(
-            json_mode, "grep",
+        return fail(
             ["no pattern — provide one as positional argument "
-             "or via -e PATTERN (repeatable for multiple)"],
+             "or via -e PATTERN (repeatable for multiple)"]
         )
 
     # Strip a leading definition keyword from a single literal pattern.
@@ -1696,7 +1999,7 @@ def _cmd_grep(args) -> int:
                     "meant literally, escape as ``\\(`` / ``\\)``; or "
                     "pass --regex to write a Python regex directly"
                 )
-            return _emit_error(json_mode, "grep", notes, hint=hint)
+            return fail(notes, hint=hint)
 
     # ``--max-count`` validation: must be a positive integer. Zero and
     # negative values have no useful semantics — ``-m 0`` would render
@@ -1704,9 +2007,7 @@ def _cmd_grep(args) -> int:
     # want a "did anything match" probe use ``-l`` directly without ``-m``.
     max_count = args.max_count
     if max_count is not None and max_count < 1:
-        return _emit_error(
-            json_mode, "grep", [f"--max-count must be ≥ 1 (got {max_count})"]
-        )
+        return fail([f"--max-count must be ≥ 1 (got {max_count})"])
 
     # ``--kind`` parsing: accept both repeated (``--kind def --kind call``)
     # and comma-separated (``--kind def,call``) forms — agents fluent in
@@ -1731,10 +2032,9 @@ def _cmd_grep(args) -> int:
                     kinds.add(k)
         invalid = kinds - valid
         if invalid:
-            return _emit_error(
-                json_mode, "grep",
+            return fail(
                 [f"invalid --kind value(s): {sorted(invalid)}; "
-                 f"valid: {sorted(valid)}"],
+                 f"valid: {sorted(valid)}"]
             )
         kind_filter = kinds
         if KIND_COMMENT in kinds:
@@ -1745,18 +2045,35 @@ def _cmd_grep(args) -> int:
         # is the definition the agent asked for, not its call sites.
         kind_filter = {KIND_DEF}
 
-    file_results, _ignored_dirs, kind_excluded_counts = grep(
-        patterns,
-        paths,
-        is_regex=is_regex,
-        case_insensitive=args.case_insensitive,
-        word_match=args.word_match,
-        include_noise=include_noise,
-        no_ignore=args.no_ignore,
-        exclude=exclude,
-        max_count=max_count,
-        kind_filter=kind_filter,
-    )
+    # The per-pattern validation above compiles each pattern on its own,
+    # but the matcher joins them into one regex — and that combined form
+    # has failure modes of its own (two patterns declaring the same named
+    # group). Uncaught, those surface as a traceback and a non-zero exit,
+    # which is exactly what the exit-0 invariant exists to prevent.
+    try:
+        outcome = grep(
+            patterns,
+            paths,
+            is_regex=is_regex,
+            case_insensitive=args.case_insensitive,
+            word_match=args.word_match,
+            include_noise=include_noise,
+            no_ignore=args.no_ignore,
+            exclude=exclude,
+            max_count=max_count,
+            kind_filter=kind_filter,
+        )
+    except re.error as exc:
+        return fail(
+            [f"patterns could not be combined into one search: {exc}"],
+            hint=(
+                "each -e pattern is wrapped in its own group, so two "
+                "patterns declaring the same (?P<name>...) collide — "
+                "rename one, or run them as separate calls"
+            ),
+        )
+    file_results = outcome.files
+    kind_excluded_counts = outcome.kind_excluded_counts
     if not file_results:
         # An explicit extensionless input whose language couldn't be
         # detected was silently skipped by the search — without this
@@ -1768,12 +2085,33 @@ def _cmd_grep(args) -> int:
         # `# hint:` nudges below are interactive guidance, omitted here.
         if json_mode:
             notes = advisory_notes + ([skip_note] if skip_note else [])
-            print(json_output.grep_json([], notes=notes))
+            print(json_output.grep_json(
+                [], notes=notes,
+                files_scanned=outcome.files_scanned,
+                pattern_counts=outcome.pattern_counts,
+            ))
             return 0
         shown = patterns[0] if len(patterns) == 1 else f"{len(patterns)} patterns"
-        print(f"# note: no matches for {shown!r}")
+        # Quote the pattern as typed. ``!r`` would re-escape it — a
+        # search for ``\.greet(`` came back reported as ``'\\.greet('``,
+        # which is not a string the user can paste back into a retry.
+        scanned = outcome.files_scanned
+        # The count is the denominator of the answer: 0 scanned means
+        # the query never reached any code (everything gitignored, no
+        # supported extension), which is a different fact from "the
+        # symbol is not there" and leads to a different next move.
+        advise(
+            f"# note: no matches for '{shown}' "
+            f"({scanned} file{'' if scanned == 1 else 's'} scanned)",
+        )
+        if scanned == 0:
+            advise(
+                "# hint: nothing was searched — the path holds no file of a "
+                "supported language, or every candidate was ignored "
+                "(retry with --no-ignore to include gitignored files)",
+            )
         if skip_note:
-            print(f"# note: {skip_note}")
+            advise(f"# note: {skip_note}")
         # Universal kind-filter hint: when ``--kind`` was the only thing
         # standing between the agent and a real result, tell them so
         # they can fix it in one retry instead of binary-searching.
@@ -1807,9 +2145,9 @@ def _cmd_grep(args) -> int:
             kind_shown = ",".join(sorted(kind_filter))
             extend = ",".join(sorted(kind_filter | set(kind_excluded_counts.keys())))
             plural = "es" if total != 1 else ""
-            print(
+            advise(
                 f"# hint: --kind {kind_shown} excluded {total} match{plural} "
-                f"({breakdown}) — retry with --kind {extend} or drop --kind"
+                f"({breakdown}) — retry with --kind {extend} or drop --kind",
             )
         # Warn-on-no-match: if any pattern carries metachars that might
         # have been intended as regex, hint at --regex. The strict
@@ -1818,10 +2156,10 @@ def _cmd_grep(args) -> int:
         # interpretation might have been wrong.
         if regex_hint_pending:
             ambiguous = [p for p in patterns if looks_like_ambiguous_regex(p)]
-            print(
-                f"# hint: pattern {ambiguous[0]!r} contains regex-like syntax "
+            advise(
+                f"# hint: pattern '{ambiguous[0]}' contains regex-like syntax "
                 f"(escaped metachar, quantifier, or anchor) — if you meant "
-                f"regex, retry with --regex"
+                f"regex, retry with --regex",
             )
         # did-you-mean fallback: only when neither the kind-filter hint
         # nor the regex hint fired (those already explain the empty
@@ -1845,13 +2183,42 @@ def _cmd_grep(args) -> int:
                     else f"{name} ({kind} ×{count})"
                     for name, kind, count in suggestions
                 )
-                print(f"# hint: did you mean: {rendered}?")
+                advise(f"# hint: did you mean: {rendered}?")
         return 0
+    # Per-pattern miss under a non-empty result. Batching several ``-e``
+    # into one call exists to save round-trips — but a live pattern used
+    # to swallow the diagnosis of a dead one entirely: the aggregate
+    # total was the only number, so "term absent from the codebase" and
+    # "my regex is wrong" looked identical to "found it". Report every
+    # pattern that matched nothing, regardless of what its siblings did.
+    # (``--json`` carries the same fact — count *and* diagnosis — in the
+    # ``patterns`` array.)
+    pattern_notes: dict[str, str] = {}
+    if len(outcome.pattern_counts) > 1:
+        for pat, n in outcome.pattern_counts.items():
+            if n:
+                continue
+            if not is_regex and looks_like_ambiguous_regex(pat):
+                pattern_notes[pat] = (
+                    "contains regex-like syntax; if you meant regex, "
+                    "retry with --regex"
+                )
+            else:
+                pattern_notes[pat] = "matched nothing"
+        if not json_mode:
+            for pat, note in pattern_notes.items():
+                detail = "" if note == "matched nothing" else f" — it {note}"
+                advise(f"# hint: -e '{pat}' matched nothing{detail}")
     # `-l` / `-c` are output-mode selectors, not query filters — the
     # full structured document is emitted regardless (the consumer
     # derives the files list and per-file counts from it).
     if json_mode:
-        print(json_output.grep_json(file_results, notes=advisory_notes))
+        print(json_output.grep_json(
+            file_results, notes=advisory_notes,
+            files_scanned=outcome.files_scanned,
+            pattern_counts=outcome.pattern_counts,
+            pattern_notes=pattern_notes,
+        ))
         return 0
     # Output-mode dispatch — ``-l`` and ``-c`` short-circuit the
     # default scope-annotated render with grep-style compact formats
@@ -1883,6 +2250,7 @@ def _cmd_digest(args) -> int:
         return _emit_error(
             json_mode, "digest",
             [f"path not found: {p}" for p in missing],
+            hint=_path_rescue_hint(missing, "digest"),
         )
     exclude = getattr(args, "exclude", []) or []
     bad = _validate_exclude(exclude)
