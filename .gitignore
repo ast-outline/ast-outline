@@ -35,3 +35,13 @@ htmlcov/
 AGENTS.md
 CLAUDE.md
 .claude/
+MANDATE.md
+BRIEFING.md
+.boardown/
+.playwright-mcp/
+*.prev
+LESSONS/
+
+# Local docs-site screenshots — scratch, not part of the CLI repo
+v[0-9]-*.png
+light-*.png
