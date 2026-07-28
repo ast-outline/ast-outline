@@ -1027,7 +1027,7 @@ def _path_rescue_hint(
             return (
                 f"the path contains spaces and the shell split it into "
                 f"{len(missing)} arguments — quote it: "
-                f'ast-outline {command} "{joined}"{tail}'
+                f'ast-outline {command} "{display_path(joined)}"{tail}'
             )
 
     # 3. Same basename elsewhere in the tree.
@@ -1104,7 +1104,7 @@ def _cmd_outline(args) -> int:
     if missing:
         return _emit_error(
             json_mode, "outline",
-            [f"path not found: {p}" for p in missing],
+            [f"path not found: {display_path(p)}" for p in missing],
             hint=_path_rescue_hint(missing, "outline"),
         )
 
@@ -1691,15 +1691,16 @@ def _cmd_show(args) -> int:
             if joined.exists():
                 return _emit_error(
                     json_mode, "show",
-                    [f"file not found: {path}"],
+                    [f"file not found: {display_path(path)}"],
                     hint=(
                         f"the path contains spaces and the shell split it "
                         f"into several arguments — quote it: ast-outline "
-                        f'show "{joined}" {" ".join(args.symbols[split:])}'
+                        f'show "{display_path(joined)}" '
+                        f'{" ".join(args.symbols[split:])}'
                     ),
                 )
         return _emit_error(
-            json_mode, "show", [f"file not found: {path}"],
+            json_mode, "show", [f"file not found: {display_path(path)}"],
             hint=_path_rescue_hint(
                 [path], "show", trailing=" ".join(args.symbols),
             ),
@@ -1880,7 +1881,7 @@ def _cmd_grep(args) -> int:
     missing = [p for p in paths if not p.exists()]
     if missing:
         return fail(
-            [f"path not found: {p}" for p in missing],
+            [f"path not found: {display_path(p)}" for p in missing],
             hint=_path_rescue_hint(
                 missing,
                 f"grep {args.pattern}" if args.pattern else "grep <pattern>",
@@ -2249,7 +2250,7 @@ def _cmd_digest(args) -> int:
     if missing:
         return _emit_error(
             json_mode, "digest",
-            [f"path not found: {p}" for p in missing],
+            [f"path not found: {display_path(p)}" for p in missing],
             hint=_path_rescue_hint(missing, "digest"),
         )
     exclude = getattr(args, "exclude", []) or []
