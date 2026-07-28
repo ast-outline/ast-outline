@@ -289,7 +289,7 @@ def digest_json(
         "fields": sum(f["counts"]["fields"] for f in files),
     }
     payload = {
-        "root": str(root) if root is not None else "",
+        "root": root.as_posix() if root is not None else "",
         "notes": list(notes or []),
         "summary": summary,
         "files": files,
@@ -314,7 +314,7 @@ def grep_json(
         "kind_counts": dict(sorted(kind_counts.items())),
     }
     payload = {
-        "root": str(root) if root is not None else "",
+        "root": root.as_posix() if root is not None else "",
         "notes": list(notes or []),
         "summary": summary,
         "files": files,
@@ -403,7 +403,7 @@ def show_dir_json(
         if ambiguous:
             match_dicts = [
                 {
-                    "file": str(fpath),
+                    "file": fpath.as_posix(),
                     "qualified_name": m.qualified_name,
                     "kind": m.kind,
                     "start_line": m.start_line,
@@ -415,7 +415,7 @@ def show_dir_json(
             match_dicts = [
                 {
                     **symbol_match_to_dict(m, view=view, no_doc=no_doc),
-                    "file": str(fpath),
+                    "file": fpath.as_posix(),
                 }
                 for (fpath, m) in matches
             ]

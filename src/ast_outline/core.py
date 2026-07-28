@@ -103,10 +103,17 @@ CALLABLE_KINDS = {KIND_METHOD, KIND_FUNCTION, KIND_CTOR, KIND_DTOR, KIND_OPERATO
 
 
 def _strip_cr(text: str) -> str:
-    """Remove carriage returns from text lifted out of a CRLF source."""
+    """Drop carriage returns from text lifted out of a CRLF source.
+
+    A trailing lone ``\\r`` is CRLF debris — a comment node ends before
+    the ``\\n``, so the return is left dangling on the end — and comes
+    off. A ``\\r`` in the middle is a line break in its own right (the
+    only one, in a classic pre-OS-X Mac file), so it becomes ``\\n``
+    rather than vanishing and running two lines together.
+    """
     if "\r" not in text:
         return text
-    return text.replace("\r\n", "\n").replace("\r", "")
+    return text.replace("\r\n", "\n").rstrip("\r").replace("\r", "\n")
 
 
 @dataclass

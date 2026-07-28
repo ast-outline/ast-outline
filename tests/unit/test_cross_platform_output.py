@@ -11,12 +11,19 @@ flavour on any host.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path, PureWindowsPath
 
 import pytest
 
 from ast_outline.adapters.go import GoAdapter
-from ast_outline.core import Declaration, ParseResult, display_path
+from ast_outline.cli import main
+from ast_outline.core import (
+    Declaration,
+    ParseResult,
+    _strip_cr,
+    display_path,
+)
 from ast_outline.json_output import _rel_path
 
 
@@ -140,3 +147,61 @@ def test_json_rel_path_uses_forward_slashes():
     assert _rel_path(PureWindowsPath(r"C:\proj\src\foo.py"), root) == "src/foo.py"
     # Outside the root the path is kept whole — still posix-spelled.
     assert _rel_path(PureWindowsPath(r"D:\other\bar.py"), root) == "D:/other/bar.py"
+
+
+def test_no_backslash_paths_anywhere_in_json_envelopes(tmp_path, capsys):
+    """Sweep the JSON output for native separators.
+
+    Per-field assertions kept missing individual call sites — the `file`
+    entries in a `show` candidate list and the envelope's own `root` were
+    each overlooked once, and the pre-existing tests passed anyway
+    because they matched with `endswith()`. Asserting over the whole
+    payload covers the fields nobody thought to name.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("class Widget:\n    pass\n", encoding="utf-8")
+    (pkg / "b.py").write_text("class Widget:\n    pass\n", encoding="utf-8")
+
+    for argv in (
+        ["outline", str(pkg), "--json"],
+        ["digest", str(pkg), "--json"],
+        ["grep", "Widget", str(pkg), "--json"],
+        ["show", str(pkg), "Widget", "--json"],
+    ):
+        capsys.readouterr()
+        assert main(argv) == 0
+        payload = json.loads(capsys.readouterr().out)
+        found = list(_every_path_value(payload))
+        # Without this the sweep would pass vacuously if the envelope
+        # ever renamed its path fields.
+        assert found, f"{argv[0]}: no path fields found to check"
+        for path_value in found:
+            assert "\\" not in path_value, (argv[0], path_value)
+
+
+def _every_path_value(node):
+    """Yield every string under a key that carries a path."""
+    path_keys = {"file", "path", "root", "directory"}
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in path_keys and isinstance(value, str) and value:
+                yield value
+            else:
+                yield from _every_path_value(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _every_path_value(item)
+
+
+def test_strip_cr_keeps_lone_carriage_returns_as_line_breaks():
+    """Trailing CRLF debris goes; a lone `\\r` mid-text is a line break.
+
+    A classic pre-OS-X Mac file uses `\\r` alone to end lines. Deleting
+    it outright would run consecutive lines together into one.
+    """
+    assert _strip_cr("// Greet says hi.\r") == "// Greet says hi."
+    assert _strip_cr("first\r\nsecond\r\n") == "first\nsecond\n"
+    assert _strip_cr("first\rsecond") == "first\nsecond"
+    assert _strip_cr("first\rsecond\r") == "first\nsecond"
+    assert _strip_cr("no returns here") == "no returns here"

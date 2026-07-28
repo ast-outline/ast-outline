@@ -1400,7 +1400,7 @@ def _cmd_show(args) -> int:
         # JSON envelope) — a display locator, never re-walked.
         root = json_output._common_root(files) or Path(".")
         return _show_across(
-            args, files, directory=str(root), glob_pattern="",
+            args, files, directory=root.as_posix(), glob_pattern="",
             json_mode=json_mode, lead_note=note,
         )
     path = Path(args.file)
